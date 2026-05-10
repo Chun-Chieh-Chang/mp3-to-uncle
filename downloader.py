@@ -49,30 +49,50 @@ def download_ffmpeg():
         logger.info("FFmpeg is already available.")
         return
 
-    logger.info("Downloading FFmpeg (this might take a minute)...")
+    logger.info("Checking for FFmpeg...")
     ensure_dirs()
     zip_path = BIN_DIR / "ffmpeg.zip"
     
-    try:
-        # Download
-        urllib.request.urlretrieve(FFMPEG_URL, zip_path)
-        logger.info("Download complete. Extracting...")
-        
-        # Extract
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # We only need ffmpeg.exe and ffprobe.exe
-            for file_info in zip_ref.infolist():
-                if file_info.filename.endswith("ffmpeg.exe") or file_info.filename.endswith("ffprobe.exe"):
-                    file_info.filename = os.path.basename(file_info.filename)
-                    zip_ref.extract(file_info, BIN_DIR)
-                    
-        logger.info("Extraction complete.")
-    except Exception as e:
-        logger.error(f"Failed to download or extract FFmpeg: {e}")
-        raise
-    finally:
-        if zip_path.exists():
-            zip_path.unlink()
+    if not zip_path.exists() or zip_path.stat().st_size == 0:
+        logger.info("Downloading FFmpeg (this might take a minute)...")
+        try:
+            # Download with User-Agent to avoid being blocked
+            req = urllib.request.Request(
+                FFMPEG_URL, 
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            )
+            with urllib.request.urlopen(req) as response, open(zip_path, 'wb') as out_file:
+                chunk_size = 1024 * 1024  # 1MB
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    out_file.write(chunk)
+            
+        except Exception as e:
+            logger.error(f"Failed to download FFmpeg: {e}")
+            if zip_path.exists():
+                zip_path.unlink()
+            raise
+
+    if zip_path.exists():
+        logger.info("Extracting FFmpeg...")
+        try:
+            # Extract
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                # We only need ffmpeg.exe and ffprobe.exe
+                for file_info in zip_ref.infolist():
+                    if file_info.filename.endswith("ffmpeg.exe") or file_info.filename.endswith("ffprobe.exe"):
+                        file_info.filename = os.path.basename(file_info.filename)
+                        zip_ref.extract(file_info, BIN_DIR)
+                        
+            logger.info("Extraction complete.")
+        except Exception as e:
+            logger.error(f"Failed to extract FFmpeg: {e}")
+            raise
+        finally:
+            if zip_path.exists():
+                zip_path.unlink()
 
 def get_video_info(url):
     """Get metadata about the YouTube video."""

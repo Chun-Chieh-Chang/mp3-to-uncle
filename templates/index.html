@@ -12,26 +12,36 @@
     <!-- Material Symbols Outlined -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- PWA -->
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <meta name="theme-color" content="#3A7CA8">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-512.png') }}">
 </head>
 <body>
     <main class="app-container">
         <header class="app-header">
-            <div class="logo-container">
-                <span class="material-symbols-outlined logo-icon">audio_file</span>
-                <h1>AudioStudio</h1>
+            <div class="header-top">
+                <div class="logo-container">
+                    <span class="material-symbols-outlined logo-icon">audio_file</span>
+                    <h1 data-en="AudioStudio" data-zh="音訊工作室">音訊工作室</h1>
+                </div>
+                <button id="langToggle" class="btn-lang-toggle">
+                    <span class="material-symbols-outlined">language</span>
+                    <span id="langText">English</span>
+                </button>
             </div>
-            <p class="subtitle">Premium YouTube to MP3 Downloader</p>
+            <p class="subtitle" data-en="Premium YouTube to MP3 Downloader" data-zh="高級 YouTube 轉 MP3 下載器">高級 YouTube 轉 MP3 下載器</p>
         </header>
 
         <section class="downloader-card">
             <div class="input-group">
                 <span class="material-symbols-outlined input-icon">link</span>
-                <input type="url" id="urlInput" placeholder="Paste YouTube link here..." autocomplete="off">
+                <input type="url" id="urlInput" placeholder="在此貼上 YouTube 連結..." data-en-placeholder="Paste YouTube link here..." data-zh-placeholder="在此貼上 YouTube 連結..." autocomplete="off">
             </div>
             
             <button id="fetchBtn" class="btn-primary">
                 <span class="material-symbols-outlined">search</span>
-                Analyze URL
+                <span data-en="Analyze URL" data-zh="分析連結">分析連結</span>
             </button>
 
             <!-- Video Info Section (Hidden by default) -->
@@ -45,24 +55,24 @@
                     <h2 id="videoTitle" class="video-title">Video Title</h2>
                     
                     <div class="controls-group">
-                        <label for="qualitySelect" class="t-label">Audio Quality</label>
+                        <label for="qualitySelect" class="t-label" data-en="Audio Quality" data-zh="音訊品質">Audio Quality</label>
                         <select id="qualitySelect" class="custom-select">
-                            <option value="320">320 kbps (Studio)</option>
-                            <option value="256">256 kbps (High)</option>
-                            <option value="192" selected>192 kbps (Standard)</option>
-                            <option value="128">128 kbps (Basic)</option>
+                            <option value="320" data-en="320 kbps (Studio)" data-zh="320 kbps (錄音室級)">320 kbps (Studio)</option>
+                            <option value="256" data-en="256 kbps (High)" data-zh="256 kbps (高品質)">256 kbps (High)</option>
+                            <option value="192" data-en="192 kbps (Standard)" data-zh="192 kbps (標準品質)">192 kbps (Standard)</option>
+                            <option value="128" selected data-en="128 kbps (Basic)" data-zh="128 kbps (基礎品質)">128 kbps (Basic)</option>
                         </select>
                     </div>
 
                     <button id="downloadBtn" class="btn-accent">
                         <span class="material-symbols-outlined">download</span>
-                        Download MP3
+                        <span data-en="Download MP3" data-zh="下載 MP3">Download MP3</span>
                     </button>
                     
                     <!-- Progress Section -->
                     <div id="progressSection" class="progress-section hidden">
                         <div class="progress-info">
-                            <span id="progressStatusText" class="t-meta">Starting...</span>
+                            <span id="progressStatusText" class="t-meta" data-en="Starting..." data-zh="正在開始...">Starting...</span>
                             <span id="progressPercentage" class="t-meta">0%</span>
                         </div>
                         <div class="progress-track">

@@ -2,6 +2,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const urlInput = document.getElementById('urlInput');
     const fetchBtn = document.getElementById('fetchBtn');
     const downloadBtn = document.getElementById('downloadBtn');
+    const langToggle = document.getElementById('langToggle');
+    const langText = document.getElementById('langText');
     
     const videoInfoSection = document.getElementById('videoInfoSection');
     const videoThumb = document.getElementById('videoThumb');
@@ -18,24 +20,83 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusText = document.getElementById('statusText');
 
     let currentUrl = '';
+    let currentLang = 'zh'; // Default to Chinese
 
-    function showStatus(message, isError = false) {
+    const translations = {
+        en: {
+            placeholder: "Paste YouTube link here...",
+            loading: "Loading...",
+            analyzing: "Analyzing...",
+            downloading: "Downloading & Converting (this may take a minute)...",
+            error_no_url: "Please enter a valid YouTube URL",
+            error_fetch_info: "Failed to fetch video information",
+            error_network: "Network error occurred while fetching info",
+            error_download: "Failed to download file",
+            error_network_download: "Network error occurred during download",
+            success_download: "Download successful! Check your browser downloads.",
+            finished: "Finished!",
+            failed: "Failed!",
+            starting_download: "Starting Download..."
+        },
+        zh: {
+            placeholder: "在此貼上 YouTube 連結...",
+            loading: "載入中...",
+            analyzing: "分析中...",
+            downloading: "正在下載並轉換（這可能需要一分鐘）...",
+            error_no_url: "請輸入有效的 YouTube 連結",
+            error_fetch_info: "獲取影片資訊失敗",
+            error_network: "獲取資訊時發生網路錯誤",
+            error_download: "下載檔案失敗",
+            error_network_download: "下載時發生網路錯誤",
+            success_download: "下載成功！請查看瀏覽器的下載項目。",
+            finished: "完成！",
+            failed: "失敗！",
+            starting_download: "開始下載..."
+        }
+    };
+
+    function updateLanguage() {
+        document.querySelectorAll('[data-en]').forEach(el => {
+            el.textContent = el.dataset[currentLang];
+        });
+
+        // Update placeholders
+        document.querySelectorAll('[data-en-placeholder]').forEach(el => {
+            el.placeholder = el.dataset[`${currentLang}Placeholder`];
+        });
+
+        // Update language toggle button text
+        langText.textContent = currentLang === 'en' ? '中文' : 'English';
+    }
+
+    langToggle.addEventListener('click', () => {
+        currentLang = currentLang === 'en' ? 'zh' : 'en';
+        updateLanguage();
+    });
+
+    function showStatus(key, isError = false, directMessage = null) {
         statusMessage.classList.remove('hidden', 'status-error', 'status-success');
         statusMessage.classList.add(isError ? 'status-error' : 'status-success');
         
         statusMessage.querySelector('.message-icon').textContent = isError ? 'error' : 'check_circle';
-        statusText.textContent = message;
+        
+        if (directMessage) {
+            statusText.textContent = directMessage;
+        } else {
+            statusText.textContent = translations[currentLang][key];
+        }
     }
 
     function hideStatus() {
         statusMessage.classList.add('hidden');
     }
 
-    function setLoadingState(btn, isLoading) {
+    function setLoadingState(btn, isLoading, customLabelKey = null) {
         if (isLoading) {
             btn.disabled = true;
             btn.dataset.originalText = btn.innerHTML;
-            btn.innerHTML = `<span class="material-symbols-outlined animated-spin">sync</span> Loading...`;
+            const label = translations[currentLang][customLabelKey || 'loading'];
+            btn.innerHTML = `<span class="material-symbols-outlined animated-spin">sync</span> ${label}`;
         } else {
             btn.disabled = false;
             if (btn.dataset.originalText) {
@@ -53,12 +114,12 @@ document.addEventListener('DOMContentLoaded', () => {
     fetchBtn.addEventListener('click', async () => {
         const url = urlInput.value.trim();
         if (!url) {
-            showStatus('Please enter a valid YouTube URL', true);
+            showStatus('error_no_url', true);
             return;
         }
 
         hideStatus();
-        setLoadingState(fetchBtn, true);
+        setLoadingState(fetchBtn, true, 'analyzing');
         videoInfoSection.classList.add('hidden');
         progressSection.classList.add('hidden');
 
@@ -81,10 +142,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 videoInfoSection.classList.remove('hidden');
                 qualitySelect.focus();
             } else {
-                showStatus(data.error || 'Failed to fetch video information', true);
+                showStatus(null, true, data.error || translations[currentLang].error_fetch_info);
             }
         } catch (error) {
-            showStatus('Network error occurred while fetching info', true);
+            showStatus('error_network', true);
         } finally {
             setLoadingState(fetchBtn, false);
         }
@@ -100,34 +161,12 @@ document.addEventListener('DOMContentLoaded', () => {
         progressSection.classList.remove('hidden');
         
         // Reset progress UI
-        progressBar.style.width = '0%';
-        progressPercentage.textContent = '0%';
-        progressStatusText.textContent = 'Starting Download...';
+        progressBar.style.width = '100%';
+        progressBar.style.animation = 'pulse 2s infinite';
+        progressPercentage.textContent = '';
+        progressStatusText.textContent = translations[currentLang].downloading;
 
         try {
-            // First, get the hash identifier for progress tracking
-            // Since Python hash() is not predictable from JS, we'll just poll, but wait!
-            // Actually, in the backend, download blocks until finished. We need continuous polling.
-            // Oh, since python blocks in the download api, fetch will wait until the download is fully done.
-            // But we want progress. Let's start the download without waiting for the response, 
-            // OR use a background task. Since app.py doesn't use background tasks for download, the fetch request
-            // will hang until it's downloaded. The backend will update global progress dictionary.
-            
-            // To make it simple: Start polling immediately.
-            const urlHashStr = currentUrl; // The backend uses hash(url)
-            
-            // Note: Since Python `hash()` is randomized per execution (for strings), 
-            // the frontend won't know the exact ID unless we return it first.
-            // Since we didn't do this in app.py, let's just make the download UI show a generic "Downloading..." state for now,
-            // Then I will refactor app.py if needed. But for a minimal viable product with good UX, let's simulate a fake progress
-            // or just use indeterminate loading.
-            
-            // For now, let's show an indeterminate loading bar since we can't reliably get the python string hash from JS.
-            progressBar.style.width = '100%';
-            progressBar.style.animation = 'pulse 2s infinite';
-            progressStatusText.textContent = 'Downloading & Converting (this may take a minute)...';
-            progressPercentage.textContent = '';
-            
             const response = await fetch('/api/download', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -137,8 +176,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
 
             if (data.success) {
-                showStatus('Download successful! Check your browser downloads.', false);
-                progressStatusText.textContent = 'Finished!';
+                showStatus('success_download', false);
+                progressStatusText.textContent = translations[currentLang].finished;
                 progressBar.style.animation = 'none';
                 
                 // Trigger file download
@@ -150,21 +189,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.body.removeChild(a);
                 
             } else {
-                showStatus(data.error || 'Failed to download file', true);
-                progressStatusText.textContent = 'Failed!';
+                showStatus(null, true, data.error || translations[currentLang].error_download);
+                progressStatusText.textContent = translations[currentLang].failed;
                 progressBar.style.backgroundColor = 'var(--warning)';
                 progressBar.style.animation = 'none';
             }
         } catch (error) {
-            showStatus('Network error occurred during download', true);
-            progressStatusText.textContent = 'Failed!';
+            showStatus('error_network_download', true);
+            progressStatusText.textContent = translations[currentLang].failed;
             progressBar.style.backgroundColor = 'var(--warning)';
             progressBar.style.animation = 'none';
         } finally {
             setLoadingState(downloadBtn, false);
         }
     });
+
+    // Initialize the UI with the default language
+    updateLanguage();
 });
+
+// Register Service Worker for PWA
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/static/sw.js')
+            .then(reg => console.log('Service Worker registered'))
+            .catch(err => console.log('Service Worker registration failed:', err));
+    });
+}
 
 /* Add basic css animation dynamically for pulse */
 const style = document.createElement('style');

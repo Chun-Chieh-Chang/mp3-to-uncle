@@ -30,9 +30,9 @@ env.bak/
 venv.bak/
 
 # App specifics
-bin/ffmpeg.exe
-bin/ffmpeg.zip
+bin/
 downloads/
+*.mp3
 
 # PyInstaller
 *.spec

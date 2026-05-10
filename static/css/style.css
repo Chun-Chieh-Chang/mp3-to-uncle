@@ -1,20 +1,20 @@
-/* Design Tokens & CSS Variables */
+/* Design Tokens - Refreshing Sea Salt Blue (Matching MeetingSummary) */
 :root {
-    --bg-base: #0F172A; /* Slate 900 */
-    --surface: #1E293B; /* Slate 800 */
-    --surface-hover: #334155; /* Slate 700 */
-    --text-primary: #F1F5F9; /* Slate 100 */
-    --text-secondary: #94A3B8; /* Slate 400 */
+    --bg-base: #F0F7FB;
+    --surface: #FFFFFF;
+    --surface-hover: #F9FCFE;
+    --text-primary: #1A3A5F;
+    --text-secondary: #5A7D9A;
     
-    --brand-accent: #60A5FA; /* Sky Blue */
-    --brand-hover: #3B82F6; /* Royal Blue */
+    --brand-accent: #3A7CA8;
+    --brand-hover: #73A8C2;
     
-    --success: #34D399; /* Emerald Light */
-    --warning: #F87171; /* Red Light */
-    --border: #334155; /* Slate 700 */
+    --success: #10B981;
+    --warning: #EF4444;
+    --border: #B4D8E7;
     
-    --shadow-card: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
-    --shadow-float: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+    --shadow-card: 0 10px 30px rgba(58, 124, 168, 0.08);
+    --shadow-float: 0 20px 40px rgba(58, 124, 168, 0.12);
     
     --radius-sm: 8px;
     --radius-md: 12px;
@@ -32,10 +32,10 @@
 }
 
 body {
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
     background-color: var(--bg-base);
     color: var(--text-primary);
-    line-height: 1.5;
+    line-height: 1.6;
     min-height: 100vh;
     display: flex;
     justify-content: center;
@@ -61,12 +61,18 @@ body {
     text-align: center;
 }
 
+.header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
 .logo-container {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 12px;
-    margin-bottom: 8px;
 }
 
 .logo-icon {
@@ -117,7 +123,7 @@ body {
 
 input[type="url"] {
     width: 100%;
-    background-color: var(--bg-base);
+    background-color: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 16px 16px 16px 48px;
@@ -129,7 +135,7 @@ input[type="url"] {
 
 input[type="url"]:focus {
     border-color: var(--brand-accent);
-    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2);
+    box-shadow: 0 0 0 3px rgba(58, 124, 168, 0.1);
 }
 
 /* Buttons */
@@ -155,21 +161,42 @@ button:disabled {
 }
 
 .btn-primary {
-    background-color: var(--surface-hover);
-    color: var(--text-primary);
+    background-color: var(--brand-accent);
+    color: #FFFFFF;
 }
 
 .btn-primary:hover:not(:disabled) {
-    background-color: var(--border);
+    background-color: var(--brand-hover);
 }
 
 .btn-accent {
-    background-color: var(--brand-accent);
-    color: var(--bg-base);
+    background-color: var(--success);
+    color: #FFFFFF;
 }
 
 .btn-accent:hover:not(:disabled) {
-    background-color: #93C5FD; /* Sky Blue Lighter */
+    background-color: #34D399; /* Emerald Light */
+}
+
+.btn-lang-toggle {
+    width: auto;
+    padding: 8px 16px;
+    background-color: var(--surface-hover);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    font-weight: 500;
+    gap: 6px;
+}
+
+.btn-lang-toggle:hover {
+    background-color: var(--border);
+    color: var(--text-primary);
+}
+
+.btn-lang-toggle span:first-child {
+    font-size: 18px;
 }
 
 /* Video Info Section */
@@ -319,16 +346,41 @@ button:disabled {
     border: 1px solid rgba(52, 211, 153, 0.2);
 }
 
-/* Responsive */
+/* Responsive & Mobile Optimization */
 @media (max-width: 480px) {
-    .app-container {
+    body {
         padding: 0;
-        gap: 24px;
+        align-items: flex-start;
+        padding-top: 24px;
+    }
+
+    .app-container {
+        padding: 16px;
+        gap: 20px;
     }
     
+    .app-header h1 {
+        font-size: 24px;
+    }
+
     .downloader-card {
+        padding: 20px;
         border-radius: var(--radius-lg);
-        border-left: none;
-        border-right: none;
+        /* Mobile specific shadows */
+        box-shadow: none;
+        border: 1px solid var(--border);
+    }
+
+    /* Ensure all buttons have minimum touch area of 44x44px */
+    button, .custom-select, input {
+        min-height: 48px;
+    }
+
+    .btn-lang-toggle {
+        padding: 10px 16px;
+    }
+
+    .video-title {
+        font-size: 16px;
     }
 }
