@@ -19,6 +19,7 @@ jobs:
           mkdir public
           cp -r static public/
           cp templates/index.html public/index.html
+          mv public/static/sw.js public/sw.js
           # More robust replacement for any url_for('static', filename='...')
           sed -i "s|{{ url_for('static', filename='|static/|g" public/index.html
           sed -i "s|') }}||g" public/index.html

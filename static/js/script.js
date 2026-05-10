@@ -219,11 +219,15 @@ document.addEventListener('DOMContentLoaded', () => {
 // Register Service Worker for PWA
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        const swUrl = window.location.hostname.includes('github.io') 
-            ? '/mp3-to-uncle/static/sw.js' 
-            : 'static/sw.js';
+        // Build base path for SW (it's now at the root of the project)
+        const pathSegments = window.location.pathname.split('/');
+        // Remove 'index.html' or empty string if it ends with /
+        if (pathSegments[pathSegments.length - 1].includes('.')) pathSegments.pop();
+        const base = pathSegments.join('/').replace(/\/$/, '');
+        const swUrl = base + '/sw.js';
+
         navigator.serviceWorker.register(swUrl)
-            .then(reg => console.log('Service Worker registered'))
+            .then(reg => console.log('Service Worker registered with scope:', reg.scope))
             .catch(err => console.log('Service Worker registration failed:', err));
     });
 }
