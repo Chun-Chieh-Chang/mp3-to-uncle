@@ -1,0 +1,17 @@
+{
+  "name": "AudioStudio - YouTube to MP3",
+  "short_name": "AudioStudio",
+  "description": "Premium YouTube to MP3 Downloader",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F0F7FB",
+  "theme_color": "#3A7CA8",
+  "icons": [
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
