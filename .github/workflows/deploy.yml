@@ -19,11 +19,9 @@ jobs:
           mkdir public
           cp -r static public/
           cp templates/index.html public/index.html
-          # Replace Flask url_for with relative paths
-          sed -i 's/{{ url_for('\''static'\'', filename='\''css\/style.css'\'') }}/static\/css\/style.css/g' public/index.html
-          sed -i 's/{{ url_for('\''static'\'', filename='\''js\/script.js'\'') }}/static\/js\/script.js/g' public/index.html
-          sed -i 's/{{ url_for('\''static'\'', filename='\''manifest.json'\'') }}/static\/manifest.json/g' public/index.html
-          sed -i 's/{{ url_for('\''static'\'', filename='\''icons\/icon-512.png'\'') }}/static\/icons\/icon-512.png/g' public/index.html
+          # More robust replacement for any url_for('static', filename='...')
+          sed -i "s|{{ url_for('static', filename='|static/|g" public/index.html
+          sed -i "s|') }}||g" public/index.html
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
