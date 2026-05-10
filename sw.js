@@ -1,10 +1,10 @@
 const CACHE_NAME = 'audiostudio-v1';
 const ASSETS = [
   './',
-  'css/style.css',
-  'js/script.js',
-  'manifest.json',
-  'icons/icon-512.png'
+  'static/css/style.css',
+  'static/js/script.js',
+  'static/manifest.json',
+  'static/icons/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
