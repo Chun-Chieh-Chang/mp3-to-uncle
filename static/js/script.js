@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
         progressSection.classList.add('hidden');
 
         try {
-            const response = await fetch('/api/info', {
+            const response = await apiFetch('/api/info', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url })
@@ -145,7 +145,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 showStatus(null, true, data.error || translations[currentLang].error_fetch_info);
             }
         } catch (error) {
-            showStatus('error_network', true);
+            if (error.message !== 'DEMO_MODE') {
+                showStatus('error_network', true);
+            }
         } finally {
             setLoadingState(fetchBtn, false);
         }
@@ -167,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
         progressStatusText.textContent = translations[currentLang].downloading;
 
         try {
-            const response = await fetch('/api/download', {
+            const response = await apiFetch('/api/download', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: currentUrl, quality })
@@ -195,21 +197,44 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressBar.style.animation = 'none';
             }
         } catch (error) {
-            showStatus('error_network_download', true);
-            progressStatusText.textContent = translations[currentLang].failed;
-            progressBar.style.backgroundColor = 'var(--warning)';
-            progressBar.style.animation = 'none';
+            if (error.message !== 'DEMO_MODE') {
+                showStatus('error_network_download', true);
+                progressStatusText.textContent = translations[currentLang].failed;
+                progressBar.style.backgroundColor = 'var(--warning)';
+                progressBar.style.animation = 'none';
+            }
         } finally {
             setLoadingState(downloadBtn, false);
         }
     });
 
     // Detect if running on GitHub Pages (Static Demo)
-    if (window.location.hostname.includes('github.io')) {
+    const isDemo = window.location.hostname.includes('github.io');
+    
+    // Calculate base path for API calls
+    const pathSegments = window.location.pathname.split('/');
+    if (pathSegments[pathSegments.length - 1].includes('.')) pathSegments.pop();
+    const basePath = pathSegments.join('/').replace(/\/$/, '');
+
+    if (isDemo) {
         const warningMsg = currentLang === 'zh' 
             ? '💡 此頁面目前為前端展示模式。下載功能需要本地 Python 後端支援。' 
             : '💡 This page is currently in Front-end Demo mode. Download functionality requires a local Python backend.';
         showStatus(null, false, warningMsg);
+    }
+
+    // API Helper to handle relative paths and demo mode
+    async function apiFetch(endpoint, options = {}) {
+        if (isDemo) {
+            const demoMsg = currentLang === 'zh'
+                ? '示範模式：後端下載功能不支援 GitHub Pages，請在本地環境執行 app.py。'
+                : 'Demo Mode: Backend download is not supported on GitHub Pages. Please run app.py locally.';
+            showStatus(null, false, demoMsg);
+            throw new Error('DEMO_MODE');
+        }
+
+        const url = basePath + endpoint;
+        return fetch(url, options);
     }
 
     // Initialize the UI with the default language
