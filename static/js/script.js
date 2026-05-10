@@ -219,7 +219,10 @@ document.addEventListener('DOMContentLoaded', () => {
 // Register Service Worker for PWA
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('static/sw.js')
+        const swUrl = window.location.hostname.includes('github.io') 
+            ? '/mp3-to-uncle/static/sw.js' 
+            : 'static/sw.js';
+        navigator.serviceWorker.register(swUrl)
             .then(reg => console.log('Service Worker registered'))
             .catch(err => console.log('Service Worker registration failed:', err));
     });
