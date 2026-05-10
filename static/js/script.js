@@ -204,6 +204,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Detect if running on GitHub Pages (Static Demo)
+    if (window.location.hostname.includes('github.io')) {
+        const warningMsg = currentLang === 'zh' 
+            ? '💡 此頁面目前為前端展示模式。下載功能需要本地 Python 後端支援。' 
+            : '💡 This page is currently in Front-end Demo mode. Download functionality requires a local Python backend.';
+        showStatus(null, false, warningMsg);
+    }
+
     // Initialize the UI with the default language
     updateLanguage();
 });

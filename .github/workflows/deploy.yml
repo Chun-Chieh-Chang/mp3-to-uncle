@@ -1,0 +1,32 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare Static Files
+        run: |
+          mkdir public
+          cp -r static public/
+          cp templates/index.html public/index.html
+          # Replace Flask url_for with relative paths
+          sed -i 's/{{ url_for('\''static'\'', filename='\''css\/style.css'\'') }}/static\/css\/style.css/g' public/index.html
+          sed -i 's/{{ url_for('\''static'\'', filename='\''js\/script.js'\'') }}/static\/js\/script.js/g' public/index.html
+          sed -i 's/{{ url_for('\''static'\'', filename='\''manifest.json'\'') }}/static\/manifest.json/g' public/index.html
+          sed -i 's/{{ url_for('\''static'\'', filename='\''icons\/icon-512.png'\'') }}/static\/icons\/icon-512.png/g' public/index.html
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
