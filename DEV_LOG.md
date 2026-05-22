@@ -131,3 +131,29 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 - **API Call Validation**: Executed PowerShell `Invoke-RestMethod` querying `http://127.0.0.1:5000/api/info` with a standard YouTube URL.
 - **Result**: Server responded cleanly under 6 seconds, returning video meta (title, thumbnail, duration, options) successfully. Download verified.
 
+## [2026-05-22] Extension Copy Conflict Troubleshooting & Re-packaging Executable
+
+### Requirement
+- Sync IDE extension folders from `~\.antigravity\extensions` to `~\.antigravity-ide\`.
+- Rebuild the standalone executable `AudioStudio.exe` to incorporate the 2026-05-22 critical fixes.
+- Perform MECE file cleaning and prepare repository for git push.
+
+### Problem Analysis & RCA
+1. **Extension Copy Failure (pyrefly.exe Locked)**:
+   - **Problem**: Running `Copy-Item` failed with `IOException: file in use` for `pyrefly.exe`.
+   - **RCA**: `pyrefly.exe` is actively managed by the IDE's process controller. Even after terminating it via `Stop-Process` or `taskkill`, the parent IDE process instantly spawns a new instance of it (e.g. from PID 11368 to 15492 within milliseconds).
+   - **CAPA**: Instead of racing the auto-spawner, utilized `robocopy` with the `/XD` (Exclude Directory) flag to skip `meta.pyrefly-1.0.0-win32-x64` entirely, while successfully copying all other 33 extensions (totaling 1.18 GB).
+2. **AudioStudio.exe Re-packaging**:
+   - **Problem**: Executables compiled prior to 2026-05-22 did not contain the critical `yt-dlp` Deno bypass and Flask multithreading logic, making them prone to hanging on YouTube links.
+   - **CAPA**: Ran PyInstaller to bundle the Flask web server, HTML templates, static assets, and FFmpeg/FFprobe binaries into a single, highly compressed 99.6MB executable:
+     `python -m PyInstaller --onefile --noconsole --name="AudioStudio" --add-data "templates;templates" --add-data "static;static" --add-data "bin;bin" app.py`
+
+### MECE File Verification & Cleanup
+- **Temporary Build Artifacts**: Deleted the `build/` directory created during PyInstaller bundling to keep the workspace clean and adhere to the MECE principle.
+- **Git Alignment**: Verified `.gitignore` correctly ignores the compiled executable (`dist/`), temporary specs, and FFmpeg binary files (`bin/`), ensuring zero bloated binary uploads.
+
+### Status
+- **Extensions**: Copied successfully.
+- **Executable**: `dist/AudioStudio.exe` generated and ready for distribution.
+- **Log**: Development log updated. Ready for git push.
+
