@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import urllib.request
+import urllib.parse
 import zipfile
 import yt_dlp
 import logging
@@ -94,13 +95,33 @@ def download_ffmpeg():
             if zip_path.exists():
                 zip_path.unlink()
 
+def _clean_url(url):
+    """Strip playlist/index params so yt-dlp only fetches a single video."""
+    parsed = urllib.parse.urlparse(url)
+    params = urllib.parse.parse_qs(parsed.query)
+    # Keep only 'v' param for youtube.com URLs
+    if 'youtube.com' in parsed.netloc and 'v' in params:
+        clean_query = urllib.parse.urlencode({'v': params['v'][0]})
+        return urllib.parse.urlunparse(parsed._replace(query=clean_query))
+    return url
+
+def _get_ffmpeg_location():
+    """Return ffmpeg location string if local exe exists, else None."""
+    local_ffmpeg = BIN_DIR / "ffmpeg.exe"
+    return str(BIN_DIR) if local_ffmpeg.exists() else None
+
 def get_video_info(url):
     """Get metadata about the YouTube video."""
+    url = _clean_url(url)
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
-        'ffmpeg_location': str(BIN_DIR) if (BIN_DIR / "ffmpeg.exe").exists() else None
+        'noplaylist': True,        # Never process a whole playlist
+        'socket_timeout': 30,      # 30s network timeout
+        'ffmpeg_location': _get_ffmpeg_location(),
+        # Use android client to bypass JS runtime (Deno) requirement in yt-dlp 2026+
+        'extractor_args': {'youtube': {'player_client': ['android']}},
     }
 
     try:
@@ -125,6 +146,7 @@ def get_video_info(url):
 
 def download_audio(url, quality='192', progress_hook=None):
     """Download the audio from the YouTube video."""
+    url = _clean_url(url)
     ensure_directories_and_ffmpeg()
 
     output_template = str(DOWNLOAD_DIR / '%(title)s.%(ext)s')
@@ -137,9 +159,13 @@ def download_audio(url, quality='192', progress_hook=None):
             'preferredquality': quality,
         }],
         'outtmpl': output_template,
-        'ffmpeg_location': str(BIN_DIR) if (BIN_DIR / "ffmpeg.exe").exists() else None,
+        'ffmpeg_location': _get_ffmpeg_location(),
+        'noplaylist': True,
+        'socket_timeout': 60,
         'quiet': True,
         'no_warnings': True,
+        # Use android client to bypass JS runtime (Deno) requirement in yt-dlp 2026+
+        'extractor_args': {'youtube': {'player_client': ['android']}},
     }
     
     if progress_hook:

@@ -99,7 +99,35 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 - **CAPA**: Added custom User-Agent headers and implemented chunked writing. Added logic to resume extraction if the zip is already present.
 
 ### Verification (PDCA)
-- **Local Server**: Running at `http://127.0.0.1:5000`.
 - **UI Test**: Language toggle verified via browser subagent. Colors verified.
 - **Functional Test**: Successfully analyzed "Big Buck Bunny" YouTube URL and simulated/started download process.
 - **FFmpeg Test**: Extraction confirmed in logs (`Extraction complete`).
+
+## [2026-05-22] Debugging yt-dlp Deno Runtime, Playlist Hangs, and Process Conflicts
+
+### Requirement
+- Fix the application freezing/hanging issue during video analysis and downloading.
+
+### Problem Analysis & RCA
+1. **yt-dlp (v2026.03.17+) JS Runtime Requirement**:
+   - **RCA**: YouTube updated their player signature system. Newer versions of yt-dlp depend on a JavaScript runtime (like Deno) to evaluate challenge scripts. Lacking a local Deno installation causes yt-dlp to either fall back to unsupported slow APIs, log `WARNING: No supported JavaScript runtime could be found`, or hang indefinitely during extraction.
+2. **Playlist Processing Overhead**:
+   - **RCA**: When users paste playlist URLs (containing `&list=...`), yt-dlp defaults to parsing all metadata of the entire playlist rather than a single video, creating huge latency.
+3. **Port 5000 Process Clashes (Flask Threading Block)**:
+   - **RCA**: Flask's debug mode or aborted terminal runs left multiple zombie Python instances listening on Port 5000. Because Flask's dev server defaults to single-threaded operations unless configured, a slow blocking yt-dlp query totally locked up the backend socket.
+
+### Corrective and Preventive Actions (CAPA)
+1. **Bypassing JS Runtime**:
+   - Configured `yt_dlp.YoutubeDL` with `extractor_args: {'youtube': {'player_client': ['android']}}`. The Android client does not enforce JS runtime solving on many streams and is significantly faster.
+2. **Playlist Pruning**:
+   - Implemented `_clean_url()` to strip away `&list=...` query components automatically.
+   - Forced `noplaylist: True` and set `socket_timeout: 30` (or `60` during download) to guarantee timely recovery.
+3. **Threading and Process Cleaning**:
+   - Forced termination of stale Python PIDs using `taskkill`.
+   - Enabled `threaded=True` on Flask's `app.run` to allow concurrent connection handling.
+
+### Verification (PDCA)
+- **Local Testing**: Process conflicts cleared. Flask running with `threaded=True`.
+- **API Call Validation**: Executed PowerShell `Invoke-RestMethod` querying `http://127.0.0.1:5000/api/info` with a standard YouTube URL.
+- **Result**: Server responded cleanly under 6 seconds, returning video meta (title, thumbnail, duration, options) successfully. Download verified.
+
