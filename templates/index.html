@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube to MP3 - Premium Studio Downloader</title>
-    <meta name="description" content="A professional, high-quality YouTube to MP3 downloader. Fast extraction with zero quality loss.">
+    <title>AudioStudio - 多平台影音下載器</title>
+    <meta name="description" content="高品質 YouTube、TikTok 等多平台音訊與影片下載器，支援 MP3 / MP4 格式輸出。">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -31,13 +31,13 @@
                     <span id="langText">English</span>
                 </button>
             </div>
-            <p class="subtitle" data-en="Premium YouTube to MP3 Downloader" data-zh="高級 YouTube 轉 MP3 下載器">高級 YouTube 轉 MP3 下載器</p>
+            <p class="subtitle" data-en="Download audio & video from YouTube, TikTok and more" data-zh="支援 YouTube、TikTok 等平台的音訊與影片下載">支援 YouTube、TikTok 等平台的音訊與影片下載</p>
         </header>
 
         <section class="downloader-card">
             <div class="input-group">
                 <span class="material-symbols-outlined input-icon">link</span>
-                <input type="url" id="urlInput" placeholder="在此貼上 YouTube 連結..." data-en-placeholder="Paste YouTube link here..." data-zh-placeholder="在此貼上 YouTube 連結..." autocomplete="off">
+                <input type="url" id="urlInput" placeholder="在此貼上影片連結..." data-en-placeholder="Paste a video link here..." data-zh-placeholder="在此貼上影片連結..." autocomplete="off">
             </div>
             
             <button id="fetchBtn" class="btn-primary">
@@ -56,6 +56,14 @@
                     <h2 id="videoTitle" class="video-title">Video Title</h2>
                     
                     <div class="controls-group">
+                        <label for="modeSelect" class="t-label" data-en="Output Format" data-zh="輸出格式">輸出格式</label>
+                        <select id="modeSelect" class="custom-select">
+                            <option value="mp3" data-en="MP3 audio" data-zh="MP3 音訊">MP3 音訊</option>
+                            <option value="mp4" data-en="MP4 video" data-zh="MP4 影片">MP4 影片</option>
+                        </select>
+                    </div>
+
+                    <div class="controls-group" id="qualityGroup">
                         <label for="qualitySelect" class="t-label" data-en="Audio Quality" data-zh="音訊品質">Audio Quality</label>
                         <select id="qualitySelect" class="custom-select">
                             <option value="320" data-en="320 kbps (Studio)" data-zh="320 kbps (錄音室級)">320 kbps (Studio)</option>
@@ -67,7 +75,7 @@
 
                     <button id="downloadBtn" class="btn-accent">
                         <span class="material-symbols-outlined">download</span>
-                        <span data-en="Download MP3" data-zh="下載 MP3">Download MP3</span>
+                        <span id="downloadBtnText" data-en="Download" data-zh="下載">下載</span>
                     </button>
                     
                     <!-- Progress Section -->

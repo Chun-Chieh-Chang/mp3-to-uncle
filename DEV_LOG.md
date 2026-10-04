@@ -1,4 +1,4 @@
-# Development Log - YouTube Downloader
+﻿# Development Log - YouTube Downloader
 
 ## [2026-04-19] Initial Setup and Planning
 
@@ -157,3 +157,32 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 - **Executable**: `dist/AudioStudio.exe` generated and ready for distribution.
 - **Log**: Development log updated. Ready for git push.
 
+## 2026-10-04 Multi-platform video support (TikTok) + MP4 output
+- **Requirement**: Support non-YouTube platforms; output files directly (no ZIP). User later decided TikTok is video-only, no images.
+- **Design**: yt-dlp only. Output format selector MP3 / MP4 (quality selector shown only for MP3). Filename title truncated to 80 chars (TikTok titles are very long).
+- **Failed attempt / scope change**: Built a gallery-dl image fallback (save to downloads/<title>/). Removed entirely (YAGNI) after user declined images; gallery-dl has no Xiaohongshu extractor anyway. gallery-dl uninstalled, not in requirements.txt.
+- **Verified**: real TikTok short link (vt.tiktok.com) -> info, MP4 (23 MB), MP3 (6.7 MB), file served via /api/files, invalid mode -> 400.
+- **Xiaohongshu RCA**: xiaohongshu.com resolves via local DNS to 140.111.246.32 (not Xiaohongshu) -> self-signed cert -> yt-dlp SSL failure; with cert check off server returns HTTP 500. Cause is network-level DNS rewrite, not code. Disabling cert verification rejected (MITM risk). Retest after changing network/DNS.
+- **Env note**: yt-dlp upgraded (was >90 days old); console print of Chinese titles needs PYTHONIOENCODING=utf-8 on cp950 terminals (test-harness only).
+- **Executable Build**: Re-packaged `dist/AudioStudio.exe` (99.4 MB) via `python -m PyInstaller --clean AudioStudio.spec`. Temporary `build/` directory cleaned up (MECE).
+## [2026-10-04] Full Project Refactor, MECE Audit & Release Packaging
+
+### Requirement
+1. Complete project refactor, dead code removal, and regression prevention.
+2. Synchronize all development documentation with 100% precision.
+3. Apply SSOT and MECE principles across resources.
+4. Verify latest portable executable is cleanly packaged.
+5. Establish Git baseline and prepare for remote push.
+
+### Changes & MECE Audit
+- **Dead Code & Import Removal**: Removed duplicate `import sys`, unused `import queue`, unused `import json`, unused `Response` from Flask, and duplicate `import webbrowser` / `Timer` in `app.py` and `downloader.py`.
+- **SSOT Alignment**: Unified directory and FFmpeg check into a single `ensure_ffmpeg()` function in `downloader.py`.
+- **PWA / SW Local Optimization**: Added dedicated `/sw.js` route to local Flask server, eliminating browser 404 console errors while maintaining GitHub Pages compatibility.
+- **UI Metadata**: Updated `<title>` and `<meta name="description">` in `templates/index.html` and `static/manifest.json` to accurately reflect multi-platform audio/video capabilities.
+- **Directory Cleanliness**: Removed empty directory `.vscode/`.
+- **Executable Re-packaging**: Compiled clean single-file executable `dist/AudioStudio.exe` (99.4 MB) using `AudioStudio.spec` with latest dependencies.
+
+### Local Runtime Verification
+- Syntax check: `python -m py_compile app.py downloader.py` passed with zero errors.
+- E2E API check: Video analysis, MP4/MP3 download, filename truncation (80 chars), and file serving verified.
+- Status: Clean state, ready for commit and push.

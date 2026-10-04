@@ -1,12 +1,11 @@
 import os
-import threading
-from flask import Flask, request, jsonify, send_from_directory, render_template, Response
-from flask_cors import CORS
-from downloader import get_video_info, download_audio, ensure_ffmpeg, DOWNLOAD_DIR
-import queue
-import json
-
 import sys
+import threading
+import webbrowser
+from threading import Timer
+from flask import Flask, request, jsonify, send_from_directory, render_template
+from flask_cors import CORS
+from downloader import get_video_info, download_media, ensure_ffmpeg, DOWNLOAD_DIR
 
 if getattr(sys, 'frozen', False):
     template_folder = os.path.join(sys._MEIPASS, 'templates')
@@ -25,6 +24,10 @@ download_progress = {}
 @app.route('/')
 def serve_index():
     return render_template('index.html')
+
+@app.route('/sw.js')
+def service_worker():
+    return send_from_directory(app.static_folder, 'sw.js', mimetype='application/javascript')
 
 @app.route('/favicon.ico')
 def favicon():
@@ -45,6 +48,9 @@ def api_download():
     data = request.json
     url = data.get('url')
     quality = data.get('quality', '192')
+    mode = data.get('mode', 'mp3')
+    if mode not in ('mp3', 'mp4'):
+        return jsonify({'success': False, 'error': 'Invalid mode'}), 400
     
     if not url:
         return jsonify({'success': False, 'error': 'URL is required'}), 400
@@ -76,13 +82,10 @@ def api_download():
             }
 
     try:
-        result = download_audio(url, quality, progress_hook=hook)
+        result = download_media(url, mode, quality, progress_hook=hook)
         if result['success']:
-            filename = os.path.basename(result['file_path'])
-            return jsonify({
-                'success': True,
-                'download_url': f'/api/files/{filename}'
-            })
+            rel = os.path.relpath(result['file_path'], DOWNLOAD_DIR).replace(os.sep, '/')
+            return jsonify({'success': True, 'download_url': f'/api/files/{rel}'})
         else:
             return jsonify(result), 500
     except Exception as e:
@@ -96,9 +99,6 @@ def api_progress(download_id):
 @app.route('/api/files/<path:filename>')
 def serve_file(filename):
     return send_from_directory(DOWNLOAD_DIR, filename, as_attachment=True)
-
-import webbrowser
-from threading import Timer
 
 def open_browser():
     webbrowser.open_new('http://127.0.0.1:5000/')

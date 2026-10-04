@@ -12,8 +12,6 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-import sys
-
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys.executable).parent.resolve()
     BUNDLE_DIR = Path(sys._MEIPASS)
@@ -111,7 +109,7 @@ def _get_ffmpeg_location():
     return str(BIN_DIR) if local_ffmpeg.exists() else None
 
 def get_video_info(url):
-    """Get metadata about the YouTube video."""
+    """Get metadata for a video link (YouTube, TikTok, etc. via yt-dlp)."""
     url = _clean_url(url)
     ydl_opts = {
         'quiet': True,
@@ -144,21 +142,13 @@ def get_video_info(url):
         logger.error(f"Failed to get video info: {e}")
         return {'success': False, 'error': str(e)}
 
-def download_audio(url, quality='192', progress_hook=None):
-    """Download the audio from the YouTube video."""
+def download_media(url, mode='mp3', quality='192', progress_hook=None):
+    """Download as 'mp3' or 'mp4' via yt-dlp."""
     url = _clean_url(url)
-    ensure_directories_and_ffmpeg()
+    ensure_ffmpeg()
 
-    output_template = str(DOWNLOAD_DIR / '%(title)s.%(ext)s')
-    
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': quality,
-        }],
-        'outtmpl': output_template,
+        'outtmpl': str(DOWNLOAD_DIR / '%(title).80s.%(ext)s'),
         'ffmpeg_location': _get_ffmpeg_location(),
         'noplaylist': True,
         'socket_timeout': 60,
@@ -167,31 +157,38 @@ def download_audio(url, quality='192', progress_hook=None):
         # Use android client to bypass JS runtime (Deno) requirement in yt-dlp 2026+
         'extractor_args': {'youtube': {'player_client': ['android']}},
     }
-    
+    if mode == 'mp4':
+        ydl_opts.update({'format': 'bv*+ba/b', 'merge_output_format': 'mp4'})
+        out_ext = 'mp4'
+    else:
+        ydl_opts.update({
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': quality,
+            }],
+        })
+        out_ext = 'mp3'
     if progress_hook:
         ydl_opts['progress_hooks'] = [progress_hook]
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            # Since postprocessor changes ext to mp3
-            filename = os.path.splitext(filename)[0] + '.mp3'
+            # Post-processing/merging changes the extension
+            filename = os.path.splitext(ydl.prepare_filename(info))[0] + '.' + out_ext
             return {'success': True, 'file_path': filename, 'title': info.get('title')}
     except Exception as e:
         logger.error(f"Download failed: {e}")
         return {'success': False, 'error': str(e)}
 
-def ensure_directories_and_ffmpeg():
-    ensure_dirs()
-    if not has_ffmpeg():
-        download_ffmpeg()
-
 def ensure_ffmpeg():
+    """Ensure download/bin directories and FFmpeg binary are ready."""
     ensure_dirs()
     if not has_ffmpeg():
         download_ffmpeg()
 
 if __name__ == "__main__":
-    ensure_directories_and_ffmpeg()
+    ensure_ffmpeg()
     print("Environment is ready.")
