@@ -10,6 +10,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const videoTitle = document.getElementById('videoTitle');
     const videoDuration = document.getElementById('videoDuration');
     const qualitySelect = document.getElementById('qualitySelect');
+    const modeSelect = document.getElementById('modeSelect');
+    const qualityGroup = document.getElementById('qualityGroup');
     
     const progressSection = document.getElementById('progressSection');
     const progressBar = document.getElementById('progressBar');
@@ -24,11 +26,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const translations = {
         en: {
-            placeholder: "Paste YouTube link here...",
+            placeholder: "Paste a video link here...",
             loading: "Loading...",
             analyzing: "Analyzing...",
             downloading: "Downloading & Converting (this may take a minute)...",
-            error_no_url: "Please enter a valid YouTube URL",
+            error_no_url: "Please enter a valid URL",
             error_fetch_info: "Failed to fetch video information",
             error_network: "Network error occurred while fetching info",
             error_download: "Failed to download file",
@@ -39,11 +41,11 @@ document.addEventListener('DOMContentLoaded', () => {
             starting_download: "Starting Download..."
         },
         zh: {
-            placeholder: "在此貼上 YouTube 連結...",
+            placeholder: "在此貼上影片連結...",
             loading: "載入中...",
             analyzing: "分析中...",
             downloading: "正在下載並轉換（這可能需要一分鐘）...",
-            error_no_url: "請輸入有效的 YouTube 連結",
+            error_no_url: "請輸入有效的連結",
             error_fetch_info: "獲取影片資訊失敗",
             error_network: "獲取資訊時發生網路錯誤",
             error_download: "下載檔案失敗",
@@ -54,6 +56,11 @@ document.addEventListener('DOMContentLoaded', () => {
             starting_download: "開始下載..."
         }
     };
+
+    function syncQualityVisibility() {
+        qualityGroup.classList.toggle('hidden', modeSelect.value !== 'mp3');
+    }
+    modeSelect.addEventListener('change', syncQualityVisibility);
 
     function updateLanguage() {
         document.querySelectorAll('[data-en]').forEach(el => {
@@ -140,7 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Show info section
                 videoInfoSection.classList.remove('hidden');
-                qualitySelect.focus();
+                modeSelect.focus();
             } else {
                 showStatus(null, true, data.error || translations[currentLang].error_fetch_info);
             }
@@ -172,23 +179,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await apiFetch('/api/download', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: currentUrl, quality })
+                body: JSON.stringify({ url: currentUrl, quality, mode: modeSelect.value })
             });
 
             const data = await response.json();
 
             if (data.success) {
                 showStatus('success_download', false);
-                progressStatusText.textContent = translations[currentLang].finished;
-                progressBar.style.animation = 'none';
-                
-                // Trigger file download
                 const a = document.createElement('a');
-                a.href = data.download_url;
+                a.href = basePath + data.download_url;
                 a.setAttribute('download', '');
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
+                progressStatusText.textContent = translations[currentLang].finished;
+                progressBar.style.animation = 'none';
                 
             } else {
                 showStatus(null, true, data.error || translations[currentLang].error_download);

@@ -1,7 +1,7 @@
 {
-  "name": "AudioStudio - YouTube to MP3",
+  "name": "AudioStudio - 多平台影音下載器",
   "short_name": "AudioStudio",
-  "description": "Premium YouTube to MP3 Downloader",
+  "description": "高品質 YouTube、TikTok 等多平台音訊與影片下載器",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#F0F7FB",
