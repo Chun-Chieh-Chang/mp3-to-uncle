@@ -1,9 +1,11 @@
+import base64
 import ipaddress
 import logging
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 import zipfile
@@ -30,12 +32,20 @@ FFMPEG_BIN = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
 IS_CLOUD = os.environ.get("DEPLOY_ENV", "").lower() == "cloud"
 MAX_DURATION_SECONDS = int(os.environ.get("MAX_DURATION_SECONDS", "3600" if IS_CLOUD else "0"))
 YTDLP_COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
-YTDLP_PLAYER_CLIENTS = [
-    c.strip() for c in os.environ.get("YTDLP_PLAYER_CLIENTS", "android").split(",") if c.strip()
-]
+YTDLP_COOKIES_B64 = os.environ.get("YTDLP_COOKIES_B64", "").strip()
 
 VALID_MODES = ("mp3", "mp4")
 VALID_QUALITIES = ("128", "192", "256", "320")
+
+
+def has_deno():
+    """Check if Deno JS runtime is available on PATH."""
+    return shutil.which("deno") is not None
+
+
+def get_ytdlp_version():
+    """Return installed yt-dlp version string."""
+    return getattr(yt_dlp.version, "__version__", "unknown")
 
 
 def ensure_dirs():
@@ -174,18 +184,58 @@ def _get_ffmpeg_location():
     return str(BIN_DIR) if local_ffmpeg.exists() else None
 
 
+def _resolve_cookies_file():
+    """Return a valid cookies.txt path from YTDLP_COOKIES_FILE or decoded YTDLP_COOKIES_B64."""
+    cookies_file = os.environ.get("YTDLP_COOKIES_FILE", YTDLP_COOKIES_FILE).strip()
+    if cookies_file and Path(cookies_file).is_file():
+        return cookies_file
+
+    cookies_b64 = os.environ.get("YTDLP_COOKIES_B64", YTDLP_COOKIES_B64).strip()
+    if cookies_b64:
+        try:
+            raw_bytes = base64.b64decode(cookies_b64)
+            target = Path(tempfile.gettempdir()) / "audiostudio_cookies.txt"
+            target.write_bytes(raw_bytes)
+            if os.name != "nt":
+                os.chmod(target, 0o600)
+            return str(target)
+        except Exception as e:
+            logger.warning(f"Failed to decode YTDLP_COOKIES_B64: {e}")
+
+    return None
+
+
+def _resolve_player_clients(has_cookies=False):
+    """Select YouTube player clients appropriate for cookies, Deno, and cloud/local mode."""
+    override = os.environ.get("YTDLP_PLAYER_CLIENTS", "").strip()
+    if override:
+        if override.lower() == "default":
+            return None
+        clients = [c.strip() for c in override.split(",") if c.strip()]
+        return clients or None
+
+    if has_cookies:
+        return ["web", "tv"]
+    if IS_CLOUD or has_deno():
+        return ["android_vr", "web", "tv"]
+    return ["android_vr", "android"]
+
+
 def _build_ydl_opts(extra_opts=None):
     """Build shared yt-dlp options across info extraction and download."""
+    cookies_file = _resolve_cookies_file()
+    clients = _resolve_player_clients(has_cookies=bool(cookies_file))
+
     opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "ffmpeg_location": _get_ffmpeg_location(),
     }
-    if YTDLP_PLAYER_CLIENTS:
-        opts["extractor_args"] = {"youtube": {"player_client": YTDLP_PLAYER_CLIENTS}}
-    if YTDLP_COOKIES_FILE and Path(YTDLP_COOKIES_FILE).is_file():
-        opts["cookiefile"] = YTDLP_COOKIES_FILE
+    if clients:
+        opts["extractor_args"] = {"youtube": {"player_client": clients}}
+    if cookies_file:
+        opts["cookiefile"] = cookies_file
     if extra_opts:
         opts.update(extra_opts)
     return opts

@@ -20,6 +20,8 @@ from downloader import (
     download_media,
     ensure_ffmpeg,
     get_video_info,
+    get_ytdlp_version,
+    has_deno,
     has_ffmpeg,
     validate_url,
 )
@@ -104,6 +106,8 @@ def api_health():
     return jsonify({
         "status": "ok",
         "ffmpeg": has_ffmpeg(),
+        "deno": has_deno(),
+        "yt_dlp_version": get_ytdlp_version(),
         "mode": "cloud" if IS_CLOUD else "local",
         "max_duration_seconds": MAX_DURATION_SECONDS,
     })

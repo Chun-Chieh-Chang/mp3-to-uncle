@@ -207,3 +207,22 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 - `py_compile` (`app.py`, `downloader.py`), `node --check` (`config.js`, `script.js`, `sw.js`), `manifest.json` JSON parse, and `deploy.yml` Jinja substitution check: all passed with 0 errors.
 - Flask `test_client()` verification suite: `GET /`, `GET /sw.js`, `GET /api/health` (`ffmpeg: true`), SSRF & invalid input `400` checks (`file://`, `127.0.0.1`, `169.254.169.254`, invalid mode/quality), `404` checks for missing jobs/files, and RFC 5987 `filename*=UTF-8''` attachment response for Chinese-named MP3: all passed (`ALL_VERIFICATIONS_PASSED`).
 - Local workspace clean; awaiting user permission before `git push`.
+
+## [2026-11-26] Render Cloud YouTube Player Response Fix (yt-dlp[default] & Multi-Client Fallback)
+
+### Problem
+- After deploying to Render Free Docker, analyzing a YouTube URL failed with:
+  `ERROR: [youtube] ...: Failed to extract any player response; please report this issue...`
+
+### Root Cause Analysis (RCA)
+1. `downloader.py` hardcoded `YTDLP_PLAYER_CLIENTS` default to `['android']` only. In `yt-dlp 2026.06.09`, `INNERTUBE_CLIENTS['android']` enforces `GVS_PO_TOKEN_POLICY.required = True` and `SUPPORTS_COOKIES = False`, causing cloud IPs without a PO token provider to fail with no fallback clients.
+2. `requirements.txt` installed `yt-dlp` instead of `yt-dlp[default]`, omitting `yt-dlp-ejs` required by Deno to evaluate YouTube player JS challenges for `web`/`tv` clients.
+
+### Corrective and Preventive Actions (CAPA)
+1. Updated `requirements.txt` to `yt-dlp[default]`.
+2. Replaced hardcoded `'android'` with `_resolve_player_clients()` in `downloader.py`:
+   - Respects explicit `YTDLP_PLAYER_CLIENTS` override (`default` delegates natively to yt-dlp).
+   - Uses `['web', 'tv']` when cookies are configured (`YTDLP_COOKIES_FILE` or new `YTDLP_COOKIES_B64`).
+   - Uses `['android_vr', 'web', 'tv']` in cloud/Deno environments (`android_vr` requires neither JS player nor PO token; `web`/`tv` act as Deno+EJS fallbacks).
+   - Uses `['android_vr', 'android']` on local environments without Deno.
+3. Exposed `deno` and `yt_dlp_version` in `/api/health` (`app.py`) for instant cloud diagnostics, and updated `DEPLOY.md` to reflect Render Free + `YTDLP_COOKIES_B64`.

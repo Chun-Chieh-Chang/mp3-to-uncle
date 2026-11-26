@@ -2,7 +2,7 @@
 
 ## 目標
 `mp3-to-uncle` (AudioStudio) 雙軌架構（路線 3）：
-1. **網頁版 + PWA（GitHub Pages 前端 + Docker 雲端後端）**：支援電腦桌面、iPhone (iOS Safari)、macOS、Android 手機免安裝使用。
+1. **網頁版 + PWA（GitHub Pages 前端 + Render Free Docker 雲端後端）**：支援電腦桌面、iPhone (iOS Safari)、macOS、Android 手機免安裝使用。
 2. **Windows 可攜單機版（GitHub Releases）**：自動化建置 `AudioStudio.exe`，不限片長、走家用網路避免機房 IP 封鎖。
 
 ## 已確認的決策

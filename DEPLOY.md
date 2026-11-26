@@ -2,27 +2,26 @@
 
 本專案採用**雙軌架構**：
 - **網頁前端（GitHub Pages）**：電腦、iPhone（iOS Safari）、macOS、Android 手機免安裝打開即用，支援加入主畫面（PWA）。
-- **雲端轉檔後端（Hugging Face Spaces Docker）**：免費 2 vCPU / 16 GB RAM、含 FFmpeg 與 Deno runtime，負責實際影音擷取與轉檔。
+- **雲端轉檔後端（Render Free Docker）**：免綁信用卡、綁定 GitHub 自動建置與部署，內含 FFmpeg、Deno 與 `yt-dlp[default]`。
 - **Windows 可攜單機版（GitHub Releases）**：一鍵自動化打包 `AudioStudio.exe`，不限片長、走家用網路避免機房 IP 限制。
 
 ---
 
-## 步驟一：3 分鐘免費部署雲端後端（Hugging Face Spaces）
+## 步驟一：3 分鐘免費部署雲端後端（Render Free）
 
-1. 註冊或登入 [Hugging Face](https://huggingface.co/)。
-2. 點選右上角頭像 → **New Space**：
-   - **Space name**：例如 `audiostudio`
-   - **Select the Space SDK**：選擇 **Docker**（Blank 範本即可）
-   - **Space hardware**：選擇 **CPU basic (2 vCPU · 16 GB RAM · Free)**
-   - 建立 Space。
-3. 將本專案程式碼推送到該 Space 的 Git repository（或直接在 HF Space 網頁上傳 / 連動檔案），確保包含 `Dockerfile`、`requirements.txt`、`app.py`、`downloader.py`、`templates/`、`static/`。
-4. 等待 HF Space 自動建置完成（狀態轉為 **Running**）後，取得公開後端網址，格式通常為：
-   ```text
-   https://<你的帳號>-audiostudio.hf.space
-   ```
-   （可在瀏覽器開啟 `<網址>/api/health` 確認回傳 `"status": "ok"` 與 `"ffmpeg": true`。）
+> 註：Hugging Face Spaces 的 Docker SDK 目前為付費項目，因此免費雲端後端建議優先使用 **Render Free (Docker)**（免信用卡）。
 
-> **備選方案（Render Free）**：也可將本專案直接連結到 Render Web Service（選擇 Docker 環境）。注意 Render 免費版僅 512 MB RAM 且 15 分鐘無流量即休眠，建議優先使用 Hugging Face Spaces。
+1. 前往 [https://render.com/](https://render.com/) 並使用 **GitHub** 登入。
+2. 點選右上角 **+ New → Web Service**，連結倉庫 `Chun-Chieh-Chang/mp3-to-uncle`。
+3. 設定欄位：
+   - **Region**：`Singapore (Southeast Asia)`
+   - **Branch**：`main`
+   - **Runtime**：`Docker`（自動讀取本專案 `Dockerfile`）
+   - **Instance Type**：**Free（$0 / month）**
+4. **Environment Variables（建議設定）**：
+   - `MAX_DURATION_SECONDS` = `1800`（Render 免費版為 512 MB RAM，限制 30 分鐘內影音避免 OOM）
+5. 點擊 **Deploy Web Service**，等待建置完成（約 3–5 分鐘）。
+6. 打開 `<你的網址>/api/health`（例如 `https://mp3-to-uncle.onrender.com/api/health`），確認回傳 `"status": "ok"`、`"ffmpeg": true`、`"deno": true`。
 
 ---
 
@@ -31,7 +30,7 @@
 1. 前往 GitHub 專案倉庫的 **Settings → Secrets and variables → Actions → Variables**。
 2. 點選 **New repository variable**，新增：
    - **Name**：`API_BASE_URL`
-   - **Value**：`https://<你的帳號>-audiostudio.hf.space`（勿加結尾斜線）
+   - **Value**：`https://<你的服務名稱>.onrender.com`（勿加結尾斜線）
 3. 前往倉庫的 **Actions** 分頁，點選 **Deploy to GitHub Pages → Run workflow** 重新部署。
 4. 部署完成後，打開：
    ```text
@@ -70,8 +69,9 @@
 
 ## YouTube 雲端機房 IP 風控備援說明
 
-公有雲免費機房 IP 有時會遇到 YouTube `Sign in to confirm you're not a bot` 驗證。若發生此狀況，有兩種解法：
+公有雲免費機房 IP 有時會遇到 YouTube `Sign in to confirm you're not a bot` 或 player response 驗證。若發生此狀況，有兩種解法：
 1. **電腦用戶**：直接下載使用 **Windows 可攜單機版**（走家用網路 IP，不觸發機房風控）。
 2. **雲端環境設定 Cookies / Player Client**：
-   - 在 Hugging Face Space 的 **Settings → Variables and secrets** 中，將 Netscape 格式的 `cookies.txt` 存為 Secret File（例如 `/data/cookies.txt`），並設定環境變數 `YTDLP_COOKIES_FILE=/data/cookies.txt`。
-   - 或視需要調整 `YTDLP_PLAYER_CLIENTS`（預設 `android`）。
+   - **Secret File（Render）**：將 Netscape 格式的 `cookies.txt` 上傳到 Render **Secret Files**（路徑 `/etc/secrets/cookies.txt`），並設定環境變數 `YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt`。
+   - **Base64 環境變數（通用）**：將 `cookies.txt` 轉成單行 Base64 後設為環境變數 `YTDLP_COOKIES_B64`（後端會自動解碼為暫存 cookies 檔並切換為支援 Cookies 的 `web,tv` client）。
+   - 或手動覆寫 `YTDLP_PLAYER_CLIENTS`（例如 `android_vr,web,tv` 或 `default`）。
