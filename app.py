@@ -232,7 +232,9 @@ def serve_file(job_id_or_filename):
     if file_path:
         resolved = Path(file_path)
         if resolved.is_file():
-            return send_file(resolved, as_attachment=True, download_name=filename)
+            ext = resolved.suffix.lower()
+            mimetype = "audio/mpeg" if ext == ".mp3" else ("video/mp4" if ext == ".mp4" else None)
+            return send_file(resolved, as_attachment=True, download_name=filename, mimetype=mimetype)
         return jsonify({"success": False, "error": "File no longer exists or has expired."}), 404
 
     return send_from_directory(DOWNLOAD_DIR, job_id_or_filename, as_attachment=True)

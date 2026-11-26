@@ -320,6 +320,9 @@ def download_media(url, mode="mp3", quality="192", progress_hook=None, output_di
                 "preferredcodec": "mp3",
                 "preferredquality": quality_str,
             }],
+            "postprocessor_args": {
+                "extractaudio": ["-id3v2_version", "3", "-write_id3v1", "1"],
+            },
         })
         out_ext = "mp3"
 
@@ -350,6 +353,9 @@ def download_media(url, mode="mp3", quality="192", progress_hook=None, output_di
                     filename = str(candidates[0])
                 else:
                     return {"success": False, "error": "Output file was not created."}
+
+            if os.path.getsize(filename) == 0:
+                return {"success": False, "error": "Output file is empty."}
 
             return {"success": True, "file_path": filename, "title": info.get("title")}
     except Exception as e:

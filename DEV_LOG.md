@@ -240,3 +240,15 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 1. Updated `ensure_dirs()` in `downloader.py` to only create `DOWNLOAD_DIR`, moving `BIN_DIR.mkdir(...)` inside Windows-only `download_ffmpeg()`.
 2. Updated `Dockerfile` to `chown -R user:user /app`.
 3. Added deterministic regression test in verification suite asserting `ensure_ffmpeg()` does not create `BIN_DIR` when system `ffmpeg` is present.
+
+## [2026-11-26] TikTok MP3 Playback Investigation & Lean Compatibility Hardening
+
+### Problem
+- Downloaded TikTok `.mp3` (3.45 MB, valid MPEG audio per `ffprobe`) failed to play in local PotPlayer with "未知的檔案格式".
+
+### Root Cause Analysis (RCA)
+- Re-encoding the downloaded file locally via FFmpeg into a fresh standard 192 kbps ID3v2.3 `libmp3lame` MP3 succeeded cleanly (5,058 KiB, 3m35s, 0 errors), yet PotPlayer still reported "未知的檔案格式" on the re-encoded file as well. This confirmed the downloaded MP3 itself was intact and the issue was local PotPlayer decoder/splitter state rather than backend output corruption.
+
+### Corrective and Preventive Actions (CAPA)
+1. Removed the extra post-download MP3 re-encoding pass (YAGNI, avoids wasting cloud CPU and double-compressing audio).
+2. Retained lightweight, zero-overhead improvements: `postprocessor_args: {"extractaudio": ["-id3v2_version", "3", "-write_id3v1", "1"]}` in `downloader.py`, non-empty output file check (`> 0 bytes`), and explicit `audio/mpeg` / `video/mp4` MIME types in `app.py`'s `serve_file()`.
