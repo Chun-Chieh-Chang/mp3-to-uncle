@@ -1,0 +1,15 @@
+.git
+.github
+.agents
+venv
+.venv
+__pycache__
+*.pyc
+*.pyo
+dist
+build
+downloads
+bin
+*.spec
+DEV_LOG.md
+handoff.md

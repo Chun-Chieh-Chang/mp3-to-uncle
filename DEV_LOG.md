@@ -186,3 +186,24 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 - Syntax check: `python -m py_compile app.py downloader.py` passed with zero errors.
 - E2E API check: Video analysis, MP4/MP3 download, filename truncation (80 chars), and file serving verified.
 - Status: Clean state, ready for commit and push.
+
+## [2026-11-26] Route 3 Dual-Track Deployment Architecture (GitHub Pages PWA + Cloud Docker + Windows Portable Release)
+
+### Requirement
+- Deploy AudioStudio as a publicly accessible web app for desktop and mobile users (including iPhone iOS, macOS, Android) on GitHub Pages, paired with a portable Windows executable distribution (Route 3).
+
+### Architecture & Problem Analysis (RCA / CAPA)
+1. **Static Hosting vs Media Processing**:
+   - **RCA**: GitHub Pages only serves static assets and cannot run Python, `yt-dlp`, or `FFmpeg`.
+   - **CAPA**: Built a decoupled dual-track architecture: static PWA frontend on GitHub Pages (configurable via `static/js/config.js` + `vars.API_BASE_URL` or in-app Server Settings modal) + containerized Flask backend (`Dockerfile` with Python 3.12, `ffmpeg`, `deno`, `gunicorn`, non-root `user`, port `7860` for Hugging Face Spaces / Render) + automated GitHub Actions release pipeline (`release-windows.yml`) building `AudioStudio.exe` to GitHub Releases.
+2. **Synchronous Timeout & Cross-User Isolation**:
+   - **RCA**: Synchronous `POST /api/download` blocked connections until conversion finished (risking proxy/mobile timeouts), used `hash(url)` IDs, and never cleaned temporary files.
+   - **CAPA**: Refactored `/api/download` to return HTTP `202` with a `uuid4` `job_id`, running bounded worker threads (`Semaphore`) with real-time progress polling (`/api/progress/<job_id>`), isolated per-job directories under `downloads/<job_id>/`, TTL auto-cleanup in cloud mode, SSRF/URL validation (`validate_url`), optional `MAX_DURATION_SECONDS` cap, and RFC 5987 UTF-8 `Content-Disposition` filenames via `send_file`.
+3. **Mobile / iOS Safari UX & Service Worker**:
+   - **RCA**: iOS Safari blocks programmatic `a.click()` after async polling; in-app browsers (LINE/FB/IG) block downloads; `sw.js` lacked `/api/` bypass and cache cleanup; `.duration-badge` had low contrast.
+   - **CAPA**: Added explicit Emerald "點擊儲存檔案 / Tap to Save File" button + iOS Files app hint, in-app browser warning banner, one-tap Paste/Clear buttons, Light/Dark Color Master Palette tokens, `100dvh` safe-area layout, `manifest.json` relative `start_url`, and `sw.js` `audiostudio-v2` network-first with `/api/` bypass.
+
+### Verification (PDCA Check)
+- `py_compile` (`app.py`, `downloader.py`), `node --check` (`config.js`, `script.js`, `sw.js`), `manifest.json` JSON parse, and `deploy.yml` Jinja substitution check: all passed with 0 errors.
+- Flask `test_client()` verification suite: `GET /`, `GET /sw.js`, `GET /api/health` (`ffmpeg: true`), SSRF & invalid input `400` checks (`file://`, `127.0.0.1`, `169.254.169.254`, invalid mode/quality), `404` checks for missing jobs/files, and RFC 5987 `filename*=UTF-8''` attachment response for Chinese-named MP3: all passed (`ALL_VERIFICATIONS_PASSED`).
+- Local workspace clean; awaiting user permission before `git push`.

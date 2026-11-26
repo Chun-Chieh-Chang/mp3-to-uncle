@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>AudioStudio - 多平台影音下載器</title>
-    <meta name="description" content="高品質 YouTube、TikTok 等多平台音訊與影片下載器，支援 MP3 / MP4 格式輸出。">
+    <meta name="description" content="高品質 YouTube、TikTok 等多平台音訊與影片下載器，支援 MP3 / MP4 格式輸出，電腦與手機皆可使用。">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,9 +12,11 @@
     <!-- Material Symbols Outlined -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <!-- PWA -->
+    <!-- PWA & iOS Support -->
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-    <meta name="theme-color" content="#3A7CA8">
+    <meta name="theme-color" content="#3B82F6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/icon-512.png') }}">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-512.png') }}">
 </head>
@@ -26,21 +28,64 @@
                     <span class="material-symbols-outlined logo-icon">audio_file</span>
                     <h1 data-en="AudioStudio" data-zh="音訊工作室">音訊工作室</h1>
                 </div>
-                <button id="langToggle" class="btn-lang-toggle">
-                    <span class="material-symbols-outlined">language</span>
-                    <span id="langText">English</span>
+                <div class="header-actions">
+                    <button type="button" id="themeToggle" class="btn-icon" aria-label="切換深淺色主題" title="切換主題">
+                        <span class="material-symbols-outlined" id="themeIcon">dark_mode</span>
+                    </button>
+                    <button type="button" id="serverSettingsBtn" class="btn-icon" aria-label="後端伺服器設定" title="伺服器設定">
+                        <span class="material-symbols-outlined">tune</span>
+                    </button>
+                    <button type="button" id="langToggle" class="btn-lang-toggle">
+                        <span class="material-symbols-outlined">language</span>
+                        <span id="langText">English</span>
+                    </button>
+                </div>
+            </div>
+            <p class="subtitle" data-en="Download audio & video from YouTube, TikTok and more — on Desktop & Mobile" data-zh="支援 YouTube、TikTok 等多平台音訊與影片下載，電腦與手機皆可使用">支援 YouTube、TikTok 等多平台音訊與影片下載，電腦與手機皆可使用</p>
+        </header>
+
+        <!-- In-App Browser Warning Banner (LINE / FB / IG / WeChat) -->
+        <div id="inAppBanner" class="banner-alert hidden" role="alert">
+            <span class="material-symbols-outlined">open_in_browser</span>
+            <p data-en="You are using an in-app browser (LINE/FB/IG), which may block file downloads. Please tap the menu and choose 'Open in Safari / Chrome'." data-zh="偵測到您正在使用 LINE / FB / IG 內建瀏覽器，檔案下載可能會被阻擋。請點擊右上或右下選單，選擇「以 Safari / Chrome 開啟」。">偵測到您正在使用 LINE / FB / IG 內建瀏覽器，檔案下載可能會被阻擋。請點擊右上或右下選單，選擇「以 Safari / Chrome 開啟」。</p>
+        </div>
+
+        <!-- Cloud Backend Unconfigured Notice -->
+        <div id="backendNotice" class="banner-info hidden" role="status">
+            <div class="banner-info-body">
+                <span class="material-symbols-outlined">cloud_off</span>
+                <div>
+                    <strong data-en="Cloud backend URL not configured" data-zh="尚未設定雲端轉檔後端網址">尚未設定雲端轉檔後端網址</strong>
+                    <p data-en="GitHub Pages only hosts the web interface. Connect a free cloud backend (e.g., Hugging Face Spaces) in Server Settings, or download the Windows Portable App below." data-zh="GitHub Pages 僅託管前端介面。請在「伺服器設定」填入免費雲端後端網址（如 Hugging Face Spaces），或直接下載下方 Windows 可攜單機版。">GitHub Pages 僅託管前端介面。請在「伺服器設定」填入免費雲端後端網址（如 Hugging Face Spaces），或直接下載下方 Windows 可攜單機版。</p>
+                </div>
+            </div>
+            <div class="banner-info-actions">
+                <button type="button" id="openSettingsFromNotice" class="btn-secondary-sm">
+                    <span class="material-symbols-outlined">tune</span>
+                    <span data-en="Server Settings" data-zh="設定後端">設定後端</span>
+                </button>
+                <button type="button" id="jumpToPortableBtn" class="btn-secondary-sm">
+                    <span class="material-symbols-outlined">download</span>
+                    <span data-en="Windows App" data-zh="Windows 單機版">Windows 單機版</span>
                 </button>
             </div>
-            <p class="subtitle" data-en="Download audio & video from YouTube, TikTok and more" data-zh="支援 YouTube、TikTok 等平台的音訊與影片下載">支援 YouTube、TikTok 等平台的音訊與影片下載</p>
-        </header>
+        </div>
 
         <section class="downloader-card">
             <div class="input-group">
                 <span class="material-symbols-outlined input-icon">link</span>
-                <input type="url" id="urlInput" placeholder="在此貼上影片連結..." data-en-placeholder="Paste a video link here..." data-zh-placeholder="在此貼上影片連結..." autocomplete="off">
+                <input type="url" id="urlInput" placeholder="在此貼上影片連結..." data-en-placeholder="Paste a video link here..." data-zh-placeholder="在此貼上影片連結..." autocomplete="off" inputmode="url">
+                <div class="input-actions">
+                    <button type="button" id="pasteBtn" class="btn-input-action" aria-label="貼上連結" title="貼上">
+                        <span class="material-symbols-outlined">content_paste</span>
+                    </button>
+                    <button type="button" id="clearBtn" class="btn-input-action hidden" aria-label="清除連結" title="清除">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
             </div>
-            
-            <button id="fetchBtn" class="btn-primary">
+
+            <button type="button" id="fetchBtn" class="btn-primary">
                 <span class="material-symbols-outlined">search</span>
                 <span data-en="Analyze URL" data-zh="分析連結">分析連結</span>
             </button>
@@ -51,42 +96,58 @@
                     <img id="videoThumb" src="" alt="Video Thumbnail">
                     <div class="duration-badge" id="videoDuration">0:00</div>
                 </div>
-                
+
                 <div class="details-container">
                     <h2 id="videoTitle" class="video-title">Video Title</h2>
-                    
-                    <div class="controls-group">
-                        <label for="modeSelect" class="t-label" data-en="Output Format" data-zh="輸出格式">輸出格式</label>
-                        <select id="modeSelect" class="custom-select">
-                            <option value="mp3" data-en="MP3 audio" data-zh="MP3 音訊">MP3 音訊</option>
-                            <option value="mp4" data-en="MP4 video" data-zh="MP4 影片">MP4 影片</option>
-                        </select>
+
+                    <div id="durationLimitWarn" class="inline-warn hidden">
+                        <span class="material-symbols-outlined">schedule</span>
+                        <span data-en="This video exceeds the cloud duration limit. Please use the Windows portable version for long videos." data-zh="此影片長度超過雲端轉檔上限，建議改用下方 Windows 可攜單機版下載。">此影片長度超過雲端轉檔上限，建議改用下方 Windows 可攜單機版下載。</span>
                     </div>
 
-                    <div class="controls-group" id="qualityGroup">
-                        <label for="qualitySelect" class="t-label" data-en="Audio Quality" data-zh="音訊品質">Audio Quality</label>
-                        <select id="qualitySelect" class="custom-select">
-                            <option value="320" data-en="320 kbps (Studio)" data-zh="320 kbps (錄音室級)">320 kbps (Studio)</option>
-                            <option value="256" data-en="256 kbps (High)" data-zh="256 kbps (高品質)">256 kbps (High)</option>
-                            <option value="192" data-en="192 kbps (Standard)" data-zh="192 kbps (標準品質)">192 kbps (Standard)</option>
-                            <option value="128" selected data-en="128 kbps (Basic)" data-zh="128 kbps (基礎品質)">128 kbps (Basic)</option>
-                        </select>
+                    <div class="controls-grid">
+                        <div class="controls-group">
+                            <label for="modeSelect" class="t-label" data-en="Output Format" data-zh="輸出格式">輸出格式</label>
+                            <select id="modeSelect" class="custom-select">
+                                <option value="mp3" data-en="MP3 audio" data-zh="MP3 音訊">MP3 音訊</option>
+                                <option value="mp4" data-en="MP4 video" data-zh="MP4 影片">MP4 影片</option>
+                            </select>
+                        </div>
+
+                        <div class="controls-group" id="qualityGroup">
+                            <label for="qualitySelect" class="t-label" data-en="Audio Quality" data-zh="音訊品質">音訊品質</label>
+                            <select id="qualitySelect" class="custom-select">
+                                <option value="320" data-en="320 kbps (Studio)" data-zh="320 kbps (錄音室級)">320 kbps (錄音室級)</option>
+                                <option value="256" data-en="256 kbps (High)" data-zh="256 kbps (高品質)">256 kbps (高品質)</option>
+                                <option value="192" data-en="192 kbps (Standard)" data-zh="192 kbps (標準品質)">192 kbps (標準品質)</option>
+                                <option value="128" selected data-en="128 kbps (Basic)" data-zh="128 kbps (基礎品質)">128 kbps (基礎品質)</option>
+                            </select>
+                        </div>
                     </div>
 
-                    <button id="downloadBtn" class="btn-accent">
+                    <button type="button" id="downloadBtn" class="btn-accent">
                         <span class="material-symbols-outlined">download</span>
-                        <span id="downloadBtnText" data-en="Download" data-zh="下載">下載</span>
+                        <span id="downloadBtnText" data-en="Start Convert & Download" data-zh="開始轉換並下載">開始轉換並下載</span>
                     </button>
-                    
+
                     <!-- Progress Section -->
                     <div id="progressSection" class="progress-section hidden">
                         <div class="progress-info">
-                            <span id="progressStatusText" class="t-meta" data-en="Starting..." data-zh="正在開始...">Starting...</span>
+                            <span id="progressStatusText" class="t-meta" data-en="Starting..." data-zh="正在開始...">正在開始...</span>
                             <span id="progressPercentage" class="t-meta">0%</span>
                         </div>
                         <div class="progress-track">
                             <div id="progressBar" class="progress-fill"></div>
                         </div>
+                    </div>
+
+                    <!-- Explicit Save Section (Crucial for iOS Safari / Mobile browsers) -->
+                    <div id="saveFileSection" class="save-file-section hidden">
+                        <a id="saveFileLink" class="btn-accent save-link-btn" href="#" download>
+                            <span class="material-symbols-outlined">file_download_done</span>
+                            <span data-en="Tap to Save File" data-zh="點擊儲存檔案">點擊儲存檔案</span>
+                        </a>
+                        <p id="iosSaveHint" class="save-hint" data-en="iPhone users: Tap the button above and choose 'Download'. Your file will appear in the Files app -> Downloads." data-zh="iPhone 用戶點擊後請選擇「下載」，檔案會存放在「檔案 App → 下載項目」。">iPhone 用戶點擊後請選擇「下載」，檔案會存放在「檔案 App → 下載項目」。</p>
                     </div>
                 </div>
             </div>
@@ -94,11 +155,84 @@
             <!-- Error/Status Messages -->
             <div id="statusMessage" class="status-message hidden">
                 <span class="material-symbols-outlined message-icon">info</span>
-                <span id="statusText">Testing message</span>
+                <span id="statusText"></span>
+            </div>
+        </section>
+
+        <!-- Dual-Track Portable & PWA Distribution Card -->
+        <section id="distributionCard" class="distribution-card">
+            <div class="dist-header">
+                <span class="material-symbols-outlined">devices</span>
+                <h2 data-en="Desktop Portable & Mobile App" data-zh="桌面可攜版與手機安裝指南">桌面可攜版與手機安裝指南</h2>
+            </div>
+
+            <div class="dist-grid">
+                <article class="dist-item">
+                    <div class="dist-item-head">
+                        <span class="material-symbols-outlined">desktop_windows</span>
+                        <h3 data-en="Windows Portable (.exe)" data-zh="Windows 可攜單機版 (.exe)">Windows 可攜單機版 (.exe)</h3>
+                    </div>
+                    <p class="dist-desc" data-en="No installation needed, unlimited duration, uses your home network directly. If Windows SmartScreen appears on first launch, click 'More info -> Run anyway'." data-zh="免安裝、不限影片長度、直接走本機網路不怕雲端擋 IP。首次開啟若出現 Windows 防護提示，請點「其他資訊 → 仍要執行」。">免安裝、不限影片長度、直接走本機網路不怕雲端擋 IP。首次開啟若出現 Windows 防護提示，請點「其他資訊 → 仍要執行」。</p>
+                    <a id="winDownloadBtn" class="btn-outline" href="https://github.com/Chun-Chieh-Chang/mp3-to-uncle/releases/latest" target="_blank" rel="noopener noreferrer">
+                        <span class="material-symbols-outlined">download_for_offline</span>
+                        <span data-en="Download Windows Portable" data-zh="下載 Windows 可攜版">下載 Windows 可攜版</span>
+                    </a>
+                </article>
+
+                <article class="dist-item">
+                    <div class="dist-item-head">
+                        <span class="material-symbols-outlined">smartphone</span>
+                        <h3 data-en="iPhone / macOS / Android Web App" data-zh="iPhone / macOS / Android 網頁 App">iPhone / macOS / Android 網頁 App</h3>
+                    </div>
+                    <p class="dist-desc" data-en="Open in Safari or Chrome, tap 'Share -> Add to Home Screen' to install as a full-screen PWA without App Store or sideloading." data-zh="免裝 APK 或側載！請用 Safari 或 Chrome 開啟本頁，點選「分享 → 加入主畫面」，即可像原生 App 一樣一鍵開啟使用。">免裝 APK 或側載！請用 Safari 或 Chrome 開啟本頁，點選「分享 → 加入主畫面」，即可像原生 App 一樣一鍵開啟使用。</p>
+                    <button type="button" id="pwaInstallBtn" class="btn-outline hidden">
+                        <span class="material-symbols-outlined">install_mobile</span>
+                        <span data-en="Install App to Home Screen" data-zh="立即安裝到主畫面">立即安裝到主畫面</span>
+                    </button>
+                </article>
             </div>
         </section>
     </main>
 
+    <!-- Server Settings Modal -->
+    <div id="settingsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2 id="settingsTitle" data-en="Cloud Backend Settings" data-zh="雲端後端伺服器設定">雲端後端伺服器設定</h2>
+                <button type="button" id="closeSettingsBtn" class="btn-icon" aria-label="關閉">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            <p class="modal-desc" data-en="Enter your deployed backend URL (e.g. Hugging Face Space or local server). Leave blank on same-origin servers." data-zh="輸入您部署的後端網址（例如 Hugging Face Space 網址）。若與後端同網址運行則留空即可。">輸入您部署的後端網址（例如 Hugging Face Space 網址）。若與後端同網址運行則留空即可。</p>
+
+            <div class="controls-group">
+                <label for="apiBaseInput" class="t-label" data-en="Backend API URL" data-zh="後端 API 網址">後端 API 網址</label>
+                <input type="url" id="apiBaseInput" class="modal-input" placeholder="https://username-audiostudio.hf.space" autocomplete="off" inputmode="url">
+            </div>
+
+            <div id="settingsStatus" class="status-message hidden">
+                <span class="material-symbols-outlined message-icon">info</span>
+                <span id="settingsStatusText"></span>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" id="testConnBtn" class="btn-outline">
+                    <span class="material-symbols-outlined">network_check</span>
+                    <span data-en="Test Connection" data-zh="測試連線">測試連線</span>
+                </button>
+                <button type="button" id="resetSettingsBtn" class="btn-outline">
+                    <span class="material-symbols-outlined">restart_alt</span>
+                    <span data-en="Reset" data-zh="清除">清除</span>
+                </button>
+                <button type="button" id="saveSettingsBtn" class="btn-primary">
+                    <span class="material-symbols-outlined">save</span>
+                    <span data-en="Save" data-zh="儲存">儲存</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/config.js') }}"></script>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
 </html>
