@@ -73,5 +73,5 @@
 1. **電腦用戶**：直接下載使用 **Windows 可攜單機版**（走家用網路 IP，不觸發機房風控）。
 2. **雲端環境設定 Cookies / Player Client**：
    - **Secret File（Render）**：將 Netscape 格式的 `cookies.txt` 上傳到 Render **Secret Files**（路徑 `/etc/secrets/cookies.txt`），並設定環境變數 `YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt`。
-   - **Base64 環境變數（通用）**：將 `cookies.txt` 轉成單行 Base64 後設為環境變數 `YTDLP_COOKIES_B64`（後端會自動解碼為暫存 cookies 檔並切換為支援 Cookies 的 `web,tv` client）。
-   - 或手動覆寫 `YTDLP_PLAYER_CLIENTS`（例如 `android_vr,web,tv` 或 `default`）。
+   - **Base64 環境變數（通用）**：將 `cookies.txt` 轉成單行 Base64 後設為環境變數 `YTDLP_COOKIES_B64`（後端會自動解碼為暫存 cookies 檔供 `yt-dlp` 使用）。
+   - **Player Client 與 JS Runtime**：後端預設採用 `yt-dlp` 原生最新 client 策略，並自動偵測環境中的 `deno`、`node`、`bun`、`quickjs` 等 JS runtime；如遇特定環境需求，亦可透過 `YTDLP_PLAYER_CLIENTS` 手動覆寫（例如 `web,tv` 或 `default`）。

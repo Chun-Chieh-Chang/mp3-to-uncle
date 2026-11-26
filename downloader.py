@@ -38,9 +38,26 @@ VALID_MODES = ("mp3", "mp4")
 VALID_QUALITIES = ("128", "192", "256", "320")
 
 
+JS_RUNTIME_BINARIES = (
+    ("deno", ("deno",)),
+    ("node", ("node",)),
+    ("bun", ("bun",)),
+    ("quickjs", ("qjs", "quickjs")),
+)
+
+
 def has_deno():
     """Check if Deno JS runtime is available on PATH."""
     return shutil.which("deno") is not None
+
+
+def get_js_runtimes():
+    """Return list of available JS runtimes on PATH for yt-dlp EJS solving."""
+    return [
+        name
+        for name, binaries in JS_RUNTIME_BINARIES
+        if any(shutil.which(binary) is not None for binary in binaries)
+    ]
 
 
 def get_ytdlp_version():
@@ -205,32 +222,26 @@ def _resolve_cookies_file():
     return None
 
 
-def _resolve_player_clients(has_cookies=False):
-    """Select YouTube player clients appropriate for cookies, Deno, and cloud/local mode."""
+def _resolve_player_clients():
+    """Return optional YTDLP_PLAYER_CLIENTS override, or None to use yt-dlp native defaults."""
     override = os.environ.get("YTDLP_PLAYER_CLIENTS", "").strip()
-    if override:
-        if override.lower() == "default":
-            return None
+    if override and override.lower() != "default":
         clients = [c.strip() for c in override.split(",") if c.strip()]
         return clients or None
-
-    if has_cookies:
-        return ["web", "tv"]
-    if IS_CLOUD or has_deno():
-        return ["android_vr", "web", "tv"]
-    return ["android_vr", "android"]
+    return None
 
 
 def _build_ydl_opts(extra_opts=None):
     """Build shared yt-dlp options across info extraction and download."""
     cookies_file = _resolve_cookies_file()
-    clients = _resolve_player_clients(has_cookies=bool(cookies_file))
+    clients = _resolve_player_clients()
 
     opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "ffmpeg_location": _get_ffmpeg_location(),
+        "js_runtimes": {"deno": {}, "node": {}, "bun": {}, "quickjs": {}},
     }
     if clients:
         opts["extractor_args"] = {"youtube": {"player_client": clients}}

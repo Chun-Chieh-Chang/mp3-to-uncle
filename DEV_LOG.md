@@ -252,3 +252,23 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 ### Corrective and Preventive Actions (CAPA)
 1. Removed the extra post-download MP3 re-encoding pass (YAGNI, avoids wasting cloud CPU and double-compressing audio).
 2. Retained lightweight, zero-overhead improvements: `postprocessor_args: {"extractaudio": ["-id3v2_version", "3", "-write_id3v1", "1"]}` in `downloader.py`, non-empty output file check (`> 0 bytes`), and explicit `audio/mpeg` / `video/mp4` MIME types in `app.py`'s `serve_file()`.
+
+## [2026-11-26] YouTube Download HTTP 403 Forbidden Fix (Native Player Client & JS Runtime Auto-Detection)
+
+### Problem
+- Local YouTube video analysis (`POST /api/info`) succeeded, but downloading (`POST /api/download` on `https://youtu.be/-gQUPWstYDI`) failed at 0% with:
+  `ERROR: unable to download video data: HTTP Error 403: Forbidden`.
+
+### Root Cause Analysis (RCA)
+1. `_resolve_player_clients()` in `downloader.py` hardcoded `extractor_args.youtube.player_client` to `["android_vr", "android"]` when Deno was absent locally (or `["android_vr", "web", "tv"]` with Deno/cloud).
+2. YouTube now enforces GVS PO Token / SABR restrictions on `android_vr` and `android` clients, causing `yt-dlp` to skip all audio-only HTTPS formats and leave only format `18` (`360p, ANDR-V`), whose media download returned `HTTP Error 403: Forbidden`.
+3. `downloader.py` only checked for `deno` (`has_deno()`) and did not pass `js_runtimes` to `yt-dlp`, leaving locally installed Node.js (`v26.7.0`) unused. Additionally, the local Python environment had an outdated `yt-dlp` (`2026.08.19`) without `yt-dlp-ejs`.
+
+### Corrective and Preventive Actions (CAPA)
+1. **Use `yt-dlp` Native Client Strategy by Default**: Updated `_resolve_player_clients()` in `downloader.py` to return `None` unless `YTDLP_PLAYER_CLIENTS` is explicitly set (and not `default`), removing brittle hardcoded `player_client` lists.
+2. **Multi-Runtime JS Detection**: Added `JS_RUNTIME_BINARIES` and `get_js_runtimes()` in `downloader.py`, configured `js_runtimes` (`deno`, `node`, `bun`, `quickjs`) in `_build_ydl_opts()`, and exposed `js_runtimes` in `GET /api/health` (`app.py`).
+3. **Documentation & Dependency Sync**: Updated `DEPLOY.md` to document native client selection and multi-runtime detection, and upgraded local `yt-dlp[default]` to `2026.11.23` (`yt-dlp-ejs 0.8.0`).
+
+### Verification (PDCA Check)
+- `py_compile` (`app.py`, `downloader.py`) and unit assertions (`_resolve_player_clients()`, `_build_ydl_opts()`, Flask `test_client().get('/api/health')` returning `js_runtimes: ['node']`, `yt_dlp_version: '2026.11.23'`) passed.
+- Real E2E `downloader.download_media("https://youtu.be/-gQUPWstYDI", mode="mp3", quality="128")` succeeded and produced a valid `.mp3` file (`4,532,013` bytes).
