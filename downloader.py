@@ -49,8 +49,7 @@ def get_ytdlp_version():
 
 
 def ensure_dirs():
-    """Ensure necessary directories exist."""
-    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    """Ensure download directory exists."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -78,6 +77,7 @@ def download_ffmpeg():
 
     logger.info("Checking for FFmpeg...")
     ensure_dirs()
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
     zip_path = BIN_DIR / "ffmpeg.zip"
 
     if not zip_path.exists() or zip_path.stat().st_size == 0:

@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN useradd -m -u 1000 user
 
 COPY --chown=user:user . .
-RUN mkdir -p /app/downloads && chown -R user:user /app/downloads
+RUN mkdir -p /app/downloads && chown -R user:user /app
 
 USER user
 

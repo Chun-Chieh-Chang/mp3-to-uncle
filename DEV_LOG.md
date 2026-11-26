@@ -226,3 +226,17 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
    - Uses `['android_vr', 'web', 'tv']` in cloud/Deno environments (`android_vr` requires neither JS player nor PO token; `web`/`tv` act as Deno+EJS fallbacks).
    - Uses `['android_vr', 'android']` on local environments without Deno.
 3. Exposed `deno` and `yt_dlp_version` in `/api/health` (`app.py`) for instant cloud diagnostics, and updated `DEPLOY.md` to reflect Render Free + `YTDLP_COOKIES_B64`.
+
+## [2026-11-26] Docker `/app/bin` Permission Denied Fix
+
+### Problem
+- TikTok URL analysis succeeded on Render, and downloading MP3 failed with `[Errno 13] Permission denied: '/app/bin'`.
+
+### Root Cause Analysis (RCA)
+1. `Dockerfile` created `WORKDIR /app` as `root` and only chowned `/app/downloads` (plus copied files), leaving `/app` owned by `root` when running as non-root `USER user`.
+2. `downloader.py`'s `ensure_ffmpeg()` unconditionally called `ensure_dirs()`, which tried to `mkdir` `BIN_DIR` (`/app/bin`) even when system `ffmpeg` was already available on `PATH`.
+
+### Corrective and Preventive Actions (CAPA)
+1. Updated `ensure_dirs()` in `downloader.py` to only create `DOWNLOAD_DIR`, moving `BIN_DIR.mkdir(...)` inside Windows-only `download_ffmpeg()`.
+2. Updated `Dockerfile` to `chown -R user:user /app`.
+3. Added deterministic regression test in verification suite asserting `ensure_ffmpeg()` does not create `BIN_DIR` when system `ffmpeg` is present.
