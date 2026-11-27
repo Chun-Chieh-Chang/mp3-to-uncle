@@ -101,6 +101,10 @@ def _terminate_proc(proc):
 
 
 def main():
+    if "--check" in sys.argv[1:]:
+        print(f"MOBILE_BRIDGE_CHECK_OK python={sys.executable}")
+        return 0
+
     port = int(os.environ.get("PORT", "5000"))
     cloudflared_bin = ensure_cloudflared()
 

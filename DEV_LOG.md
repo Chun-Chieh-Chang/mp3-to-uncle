@@ -298,3 +298,16 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 2. **Bridge QR UI (`app.py`, `templates/bridge.html`)**: Added `/bridge` route validating `https://` tunnel URLs via `validate_url()` and rendering a local client-side QR Code + one-click copy links + iPhone Safari instructions.
 3. **One-Click Launcher (`mobile_bridge.py`, `start_mobile_bridge.bat`)**: Automated Python detection, auto-download of official `cloudflared-windows-amd64.exe` into `bin/`, local Flask startup, quick Cloudflare Tunnel creation, and automatic browser QR launch.
 4. **Docs (`DEPLOY.md`, `handoff.md`)**: Documented mobile bridge usage and Render `mp3-to-uncle-us` 24/7 TikTok configuration.
+
+## [2026-11-27] Fix `start_mobile_bridge.bat` `cmd.exe` Parsing Error (CRLF & Pure ASCII)
+
+### Problem
+- Double-clicking `start_mobile_bridge.bat` failed in `cmd.exe` with `'"PY_CMD="' is not recognized`, `Unknown option: -%`, and `']' is not recognized`.
+
+### Root Cause Analysis (RCA)
+- `start_mobile_bridge.bat` was saved with Unix LF (`\n`) line endings, UTF-8 multi-byte Chinese characters, and parenthesized `if`/`for` blocks. Windows `cmd.exe` miscalculates batch file byte-seek offsets when LF is used with parenthesized blocks / multi-byte encodings, jumping mid-line on resumption.
+
+### Corrective and Preventive Actions (CAPA)
+1. Added `.gitattributes` (`*.bat text eol=crlf`) to enforce CRLF on all batch scripts permanently.
+2. Rewrote `start_mobile_bridge.bat` using pure ASCII, flat `goto` labels (no parenthesized blocks), and strict CRLF (`\r\n`) line endings, with `--check` passthrough for non-interactive testing.
+3. Added `--check` fast-path to `mobile_bridge.py` and verified directly via `cmd /c start_mobile_bridge.bat --check`.
