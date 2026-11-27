@@ -56,7 +56,7 @@
                 <span class="material-symbols-outlined">cloud_off</span>
                 <div>
                     <strong data-en="Cloud backend URL not configured" data-zh="尚未設定雲端轉檔後端網址">尚未設定雲端轉檔後端網址</strong>
-                    <p data-en="GitHub Pages only hosts the web interface. Connect a free cloud backend (e.g., Hugging Face Spaces) in Server Settings, or download the Windows Portable App below." data-zh="GitHub Pages 僅託管前端介面。請在「伺服器設定」填入免費雲端後端網址（如 Hugging Face Spaces），或直接下載下方 Windows 可攜單機版。">GitHub Pages 僅託管前端介面。請在「伺服器設定」填入免費雲端後端網址（如 Hugging Face Spaces），或直接下載下方 Windows 可攜單機版。</p>
+                    <p data-en="GitHub Pages only hosts the web interface. Connect a free cloud backend (e.g., Render or Home Mobile Bridge) in Server Settings, or download the Windows Portable App below." data-zh="GitHub Pages 僅託管前端介面。請在「伺服器設定」填入後端網址（如 Render 雲端或家用手機橋接），或直接下載下方 Windows 可攜單機版。">GitHub Pages 僅託管前端介面。請在「伺服器設定」填入後端網址（如 Render 雲端或家用手機橋接），或直接下載下方 Windows 可攜單機版。</p>
                 </div>
             </div>
             <div class="banner-info-actions">
@@ -221,11 +221,11 @@
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
-            <p class="modal-desc" data-en="Enter your deployed backend URL (e.g. Hugging Face Space or local server). Leave blank on same-origin servers." data-zh="輸入您部署的後端網址（例如 Hugging Face Space 網址）。若與後端同網址運行則留空即可。">輸入您部署的後端網址（例如 Hugging Face Space 網址）。若與後端同網址運行則留空即可。</p>
+            <p class="modal-desc" data-en="Enter your deployed backend URL (e.g. Render or Home Mobile Bridge). Leave blank on same-origin servers." data-zh="輸入您部署的後端網址（例如 Render 雲端或家用手機橋接網址）。若與後端同網址運行則留空即可。">輸入您部署的後端網址（例如 Render 雲端或家用手機橋接網址）。若與後端同網址運行則留空即可。</p>
 
             <div class="controls-group">
                 <label for="apiBaseInput" class="t-label" data-en="Backend API URL" data-zh="後端 API 網址">後端 API 網址</label>
-                <input type="url" id="apiBaseInput" class="modal-input" placeholder="https://username-audiostudio.hf.space" autocomplete="off" inputmode="url">
+                <input type="url" id="apiBaseInput" class="modal-input" placeholder="https://your-service.onrender.com" autocomplete="off" inputmode="url">
             </div>
 
             <div id="settingsStatus" class="status-message hidden">

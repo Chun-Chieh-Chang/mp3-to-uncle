@@ -34,42 +34,6 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 - Cloned repository from GitHub.
 - Initial assessment of project structure and dependencies.
 
-# Development Log - YouTube Downloader
-
-## [2026-04-19] Initial Setup and Planning
-
-### Requirement
-Create a YouTube Downloader focusing on MP3 conversion with multiple quality options.
-
-### Problem Analysis
-- `yt-dlp` is available but `ffmpeg` is not installed on the system.
-- Need a portable way to provide `ffmpeg` for audio conversion.
-- UI needs to be premium and responsive.
-
-### Plan
-- Flask Backend.
-- yt-dlp for extraction and downloading.
-- Automatic portable ffmpeg downloader.
-- Modern CSS/JS Frontend with high aesthetics.
-
-### Root Cause Analysis (RCA) - Preliminary
-- System lacks common media processing binaries.
-- Solution: Bundle them or provide a script to pull them.
-
-### Corrective and Preventive Actions (CAPA)
-- Implementing `downloader.py` to check for `ffmpeg.exe` in the local path first.
-
-### [2026-04-19] Implementation Finished
-- Codebase generated. UI uses Design System guidelines.
-- Automated FFmpeg download logic successfully created.
-- Syntax checks passed.
-
-## [2026-05-10] Repository Initialization and Verification
-
-### Task
-- Cloned repository from GitHub.
-- Initial assessment of project structure and dependencies.
-
 ### Status
 - Repository successfully cloned to local environment.
 - Project structure verified: Flask backend with custom yt-dlp integration.
@@ -375,3 +339,23 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
    - Monitors both Flask and tunnel processes in a 1s non-blocking loop; automatically restarts Flask if crashed and rebuilds the tunnel immediately when `tunnel_proc` exits.
    - Runs a periodic `/api/health` probe (`HEALTH_CHECK_INTERVAL = 60s`); 3 consecutive failures trigger zombie tunnel termination and automatic rebuild.
    - Uses exponential backoff (`5s` up to `60s`) while offline, re-syncs the recovered tunnel URL to the same Secret GitHub Gist once online, and never re-opens duplicate browser tabs.
+
+
+## [2026-11-27] Dead Code, Outdated Artifact & Documentation Cleanup (MECE Audit)
+
+### Requirement
+- Remove dead code, duplicated definitions/config entries, outdated local build artifacts, and synchronize documentation/UI copy with the current architecture.
+
+### Root Cause Analysis (RCA)
+1. Incremental feature additions left unused helpers (`_resolve_cookies_file` in `downloader.py`), duplicated constants/imports (`ANSI_RE` across `downloader.py`/`app.py`/`mobile_bridge.py`, `from threading import Timer` in `app.py`), unused template context args (`gist_id`, `pages_url`), unused frontend tokens (`--glass-border` in `style.css`, `placeholder` translation key in `script.js`), and duplicate `.gitignore` entries (`build/`, `dist/`, `downloads/`).
+2. `templates/index.html`, `DEPLOY.md`, `handoff.md`, and `DEV_LOG.md` still contained outdated Hugging Face Spaces references, a duplicated initial log section, and pre-bridge/pre-watchdog status notes.
+3. Stale untracked/ignored local artifacts (`AudioStudio.spec` from 2026-05-22, `dist/AudioStudio.exe` from 2026-10-04, and `__pycache__/`) remained on disk.
+
+### Corrective and Preventive Actions (CAPA)
+1. **Dead Code & SSOT Deduplication**: Removed `_resolve_cookies_file()` from `downloader.py`, shared `downloader.ANSI_RE` across `app.py` and `mobile_bridge.py`, removed `from threading import Timer` and unused `/bridge` template args in `app.py`, and pruned unused `placeholder` keys (`static/js/script.js`) and `--glass-border` tokens (`static/css/style.css`).
+2. **Config & UI Alignment**: Deduplicated `.gitignore`, added `.bridge_config.json` to `.dockerignore`, replaced outdated Hugging Face references in `templates/index.html` with Render / Home Mobile Bridge guidance, and bumped `static/sw.js` cache to `audiostudio-v4`.
+3. **Documentation & Artifact Cleanup (MECE)**: Removed duplicated lines 1–36 in `DEV_LOG.md`, updated `DEPLOY.md` (3-tier tunnel fallback, Secret Gist fixed QR, watchdog, inline preview & native share) and `handoff.md`, and deleted `AudioStudio.spec`, `dist/`, and `__pycache__/` while preserving `bin/` and `downloads/`.
+
+### Verification (PDCA Check)
+- `py_compile` (`app.py`, `downloader.py`, `mobile_bridge.py`), `node --check` (`config.js`, `script.js`, `sw.js`), `manifest.json` parse, and `deploy.yml` Jinja substitution check: all passed.
+- Flask `test_client()` & SSOT assertions (`ALL_RUNTIME_CHECKS_PASSED`) + `start_mobile_bridge.bat --check` (`MOBILE_BRIDGE_CHECK_OK`): all passed.

@@ -11,5 +11,6 @@ build
 downloads
 bin
 *.spec
+.bridge_config.json
 DEV_LOG.md
 handoff.md

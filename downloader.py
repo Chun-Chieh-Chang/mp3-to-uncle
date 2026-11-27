@@ -288,11 +288,6 @@ def _resolve_cookies_status():
     return {"path": None, "loaded": False, "source": "none", "error": None}
 
 
-def _resolve_cookies_file():
-    """Return a valid cookies.txt path from YTDLP_COOKIES_FILE or decoded YTDLP_COOKIES_B64."""
-    return _resolve_cookies_status()["path"]
-
-
 def _resolve_player_clients():
     """Return optional YTDLP_PLAYER_CLIENTS override, or None to use yt-dlp native defaults."""
     override = os.environ.get("YTDLP_PLAYER_CLIENTS", "").strip()

@@ -31,11 +31,8 @@ venv.bak/
 
 # App specifics
 bin/
-downloads/
 *.mp3
 .bridge_config.json
 
 # PyInstaller
 *.spec
-build/
-dist/

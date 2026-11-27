@@ -15,7 +15,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-from downloader import BIN_DIR
+from downloader import ANSI_RE, BIN_DIR
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -35,7 +35,6 @@ TUNNEL_URL_RE = re.compile(
     r"https://[a-z0-9-]+\.(?:trycloudflare\.com|lhr\.life|lhr\.rocks)",
     re.IGNORECASE,
 )
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 PAGES_URL = "https://chun-chieh-chang.github.io/mp3-to-uncle/"
 
 

@@ -9,12 +9,12 @@ import urllib.parse
 import uuid
 import webbrowser
 from pathlib import Path
-from threading import Timer
 
 from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
 from flask_cors import CORS
 
 from downloader import (
+    ANSI_RE,
     DOWNLOAD_DIR,
     MAX_DURATION_SECONDS,
     VALID_MODES,
@@ -44,7 +44,6 @@ AUTO_CLEANUP = os.environ.get("AUTO_CLEANUP", "true" if IS_CLOUD else "false").l
 FILE_TTL_SECONDS = int(os.environ.get("FILE_TTL_SECONDS", "900"))
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "3"))
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 LAN_URL_RE = re.compile(
     r"^http://(?:192\.168|10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}:\d{1,5}$"
 )
@@ -130,12 +129,10 @@ def serve_bridge():
     )
     return render_template(
         "bridge.html",
-        gist_id=gist_id,
         fixed_bridge_url=fixed_bridge_url,
         tunnel_url=tunnel_url,
         mobile_connect_url=mobile_connect_url,
         lan_url=lan_url,
-        pages_url=pages_url,
     )
 
 
@@ -301,6 +298,6 @@ if __name__ == "__main__":
     debug = os.environ.get("FLASK_DEBUG") == "1"
 
     if not IS_CLOUD and host in ("127.0.0.1", "localhost") and os.environ.get("NO_BROWSER") != "1":
-        Timer(1, lambda: webbrowser.open_new(f"http://127.0.0.1:{port}/")).start()
+        threading.Timer(1, lambda: webbrowser.open_new(f"http://127.0.0.1:{port}/")).start()
 
     app.run(host=host, port=port, debug=debug, use_reloader=False, threaded=True)

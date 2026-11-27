@@ -14,7 +14,6 @@
     --success-hover: #059669;
     --warning: #EF4444;
     --border: #E5E7EB;
-    --glass-border: rgba(255, 255, 255, 0.6);
 
     --shadow-card: 0 8px 24px rgba(17, 24, 39, 0.06);
     --shadow-float: 0 16px 36px rgba(17, 24, 39, 0.1);
@@ -42,7 +41,6 @@
     --success-hover: #10B981;
     --warning: #F87171;
     --border: #334155;
-    --glass-border: rgba(255, 255, 255, 0.1);
 
     --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.35);
     --shadow-float: 0 16px 36px rgba(0, 0, 0, 0.45);

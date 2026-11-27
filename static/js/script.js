@@ -82,7 +82,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const translations = {
         en: {
-            placeholder: 'Paste a video link here...',
             loading: 'Loading...',
             analyzing: 'Analyzing...',
             queued: 'Queued for processing...',
@@ -111,7 +110,6 @@ document.addEventListener('DOMContentLoaded', () => {
             bridge_fetch_fail: 'Unable to look up latest home server address. Check your network and try again.'
         },
         zh: {
-            placeholder: '在此貼上影片連結...',
             loading: '載入中...',
             analyzing: '分析中...',
             queued: '排隊處理中...',
