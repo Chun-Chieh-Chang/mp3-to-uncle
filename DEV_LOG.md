@@ -359,3 +359,19 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 ### Verification (PDCA Check)
 - `py_compile` (`app.py`, `downloader.py`, `mobile_bridge.py`), `node --check` (`config.js`, `script.js`, `sw.js`), `manifest.json` parse, and `deploy.yml` Jinja substitution check: all passed.
 - Flask `test_client()` & SSOT assertions (`ALL_RUNTIME_CHECKS_PASSED`) + `start_mobile_bridge.bat --check` (`MOBILE_BRIDGE_CHECK_OK`): all passed.
+
+## [2026-11-27] Migrate GitHub Pages Deployment to Official GitHub Actions
+
+### Requirement
+- Retire the build-artifact branch `gh-pages` so the repository keeps a single `main` branch, migrating deployment to official GitHub Actions Pages.
+
+### Root Cause Analysis (RCA)
+- `.github/workflows/deploy.yml` previously used `peaceiris/actions-gh-pages@v3`, which pushes generated static files into a separate `gh-pages` branch on every `main` push, preventing deletion of `gh-pages`.
+
+### Corrective and Preventive Actions (CAPA)
+1. Updated `.github/workflows/deploy.yml` to use `actions/configure-pages@v5`, `actions/upload-pages-artifact@v3`, and `actions/deploy-pages@v4` with `pages: write` / `id-token: write` permissions, `concurrency` protection, and `touch public/.nojekyll`.
+2. Updated `DEPLOY.md` to document setting **Settings → Pages → Build and deployment → Source** to **GitHub Actions**.
+
+### Verification (PDCA Check)
+- `yaml.safe_load` parsed `.github/workflows/deploy.yml` cleanly (`YAML_PARSED_OK`) with all required permissions/steps and no `peaceiris/actions-gh-pages` references.
+- Local simulation of `Prepare Static Files` (`index.html` Jinja substitution, `sw.js`, `favicon.ico`, `.nojekyll`, `config.js` JSON parse, and `node --check`) passed (`PAGES_BUILD_SIMULATION_OK`).

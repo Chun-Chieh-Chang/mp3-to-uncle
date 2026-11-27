@@ -27,12 +27,13 @@
 
 ## 步驟二：連結 GitHub Pages 前端
 
-1. 前往 GitHub 專案倉庫的 **Settings → Secrets and variables → Actions → Variables**。
-2. 點選 **New repository variable**，新增：
+1. 前往 GitHub 專案倉庫的 **Settings → Pages → Build and deployment → Source**，確認設為 **GitHub Actions**（本專案使用官方 Actions 部署，無需保留 `gh-pages` 分支）。
+2. 前往 GitHub 專案倉庫的 **Settings → Secrets and variables → Actions → Variables**。
+3. 點選 **New repository variable**，新增：
    - **Name**：`API_BASE_URL`
    - **Value**：`https://<你的服務名稱>.onrender.com`（勿加結尾斜線）
-3. 前往倉庫的 **Actions** 分頁，點選 **Deploy to GitHub Pages → Run workflow** 重新部署。
-4. 部署完成後，打開：
+4. 前往倉庫的 **Actions** 分頁，點選 **Deploy to GitHub Pages → Run workflow** 重新部署。
+5. 部署完成後，打開：
    ```text
    https://chun-chieh-chang.github.io/mp3-to-uncle/
    ```
