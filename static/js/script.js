@@ -37,6 +37,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const saveFileSection = document.getElementById('saveFileSection');
     const saveFileLink = document.getElementById('saveFileLink');
+    const savedFileName = document.getElementById('savedFileName');
+    const savedLocationText = document.getElementById('savedLocationText');
+    const mediaPreviewWrap = document.getElementById('mediaPreviewWrap');
+    const audioPreview = document.getElementById('audioPreview');
+    const videoPreview = document.getElementById('videoPreview');
+    const shareFileBtn = document.getElementById('shareFileBtn');
 
     const statusMessage = document.getElementById('statusMessage');
     const statusText = document.getElementById('statusText');
@@ -59,9 +65,15 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentLang = 'zh';
     let activePollTimer = null;
     let deferredInstallPrompt = null;
+    let lastSavedLocalPath = null;
+    let lastReadyFileUrl = '';
+    let lastReadyFilename = '';
+    let lastReadyMimeType = '';
 
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent) && !isIOS;
     const isInAppBrowser = /Line|FBAN|FBAV|Instagram|MicroMessenger/i.test(navigator.userAgent);
 
     const translations = {
@@ -87,7 +99,8 @@ document.addEventListener('DOMContentLoaded', () => {
             conn_fail: 'Connection failed. Check URL and CORS/HTTPS.',
             settings_saved: 'Server settings saved.',
             settings_reset: 'Server settings cleared.',
-            api_autoconnect: 'Connected to custom backend from link!'
+            api_autoconnect: 'Connected to custom backend from link!',
+            share_unsupported: 'Your browser does not support direct file sharing. Please use "Tap to Save File" above.'
         },
         zh: {
             placeholder: '在此貼上影片連結...',
@@ -111,7 +124,8 @@ document.addEventListener('DOMContentLoaded', () => {
             conn_fail: '連線失敗，請確認網址正確且支援 HTTPS。',
             settings_saved: '已儲存伺服器設定。',
             settings_reset: '已清除自訂伺服器設定。',
-            api_autoconnect: '已從專屬連結自動連線至後端伺服器！'
+            api_autoconnect: '已從專屬連結自動連線至後端伺服器！',
+            share_unsupported: '此瀏覽器不支援直接分享檔案，請點擊上方「點擊儲存檔案」。'
         }
     };
 
@@ -202,6 +216,50 @@ document.addEventListener('DOMContentLoaded', () => {
         urlInput.focus();
     });
 
+    function getDefaultSaveLocation(localPath = null) {
+        const isZh = currentLang === 'zh';
+        let baseLocation = '';
+        if (isIOS) {
+            baseLocation = isZh
+                ? '「檔案」App →「下載項目」（可能在「iCloud 雲碟」或「我的 iPhone」內），或點 Safari 網址列藍色「↓」圖示直接開啟'
+                : 'Files app -> Downloads (under iCloud Drive or On My iPhone), or tap the blue "↓" icon in Safari\'s address bar';
+        } else if (isAndroid) {
+            baseLocation = isZh
+                ? '「檔案」App → 內部儲存空間 / Download（下載），或 Chrome「⋮ → 下載內容」'
+                : 'Files app -> Internal Storage / Download, or Chrome menu -> Downloads';
+        } else if (isMac) {
+            baseLocation = isZh
+                ? 'Finder →「下載項目 (Downloads)」'
+                : 'Finder -> Downloads';
+        } else {
+            baseLocation = isZh
+                ? '瀏覽器預設「下載 (Downloads)」資料夾（按 Ctrl+J 可開啟）'
+                : 'Browser Downloads folder (press Ctrl+J to open)';
+        }
+
+        if (localPath) {
+            const sep = isZh ? ' ｜ 本機伺服器備份：' : ' | Local server copy: ';
+            return `${baseLocation}${sep}${localPath}`;
+        }
+        return baseLocation;
+    }
+
+    function resetSavePreview() {
+        saveFileSection.classList.add('hidden');
+        mediaPreviewWrap.classList.add('hidden');
+        audioPreview.pause();
+        audioPreview.removeAttribute('src');
+        audioPreview.classList.add('hidden');
+        videoPreview.pause();
+        videoPreview.removeAttribute('src');
+        videoPreview.classList.add('hidden');
+        shareFileBtn.classList.add('hidden');
+        lastSavedLocalPath = null;
+        lastReadyFileUrl = '';
+        lastReadyFilename = '';
+        lastReadyMimeType = '';
+    }
+
     function updateLanguage() {
         document.documentElement.lang = currentLang === 'en' ? 'en' : 'zh-Hant';
         document.querySelectorAll('[data-en]').forEach((el) => {
@@ -211,6 +269,9 @@ document.addEventListener('DOMContentLoaded', () => {
             el.placeholder = el.dataset[`${currentLang}Placeholder`];
         });
         langText.textContent = currentLang === 'en' ? '中文' : 'English';
+        if (!saveFileSection.classList.contains('hidden')) {
+            savedLocationText.textContent = getDefaultSaveLocation(lastSavedLocalPath);
+        }
     }
 
     langToggle.addEventListener('click', () => {
@@ -285,7 +346,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setLoadingState(fetchBtn, true, 'analyzing');
         videoInfoSection.classList.add('hidden');
         progressSection.classList.add('hidden');
-        saveFileSection.classList.add('hidden');
+        resetSavePreview();
         durationLimitWarn.classList.add('hidden');
 
         try {
@@ -327,7 +388,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const mode = modeSelect.value;
 
         hideStatus();
-        saveFileSection.classList.add('hidden');
+        resetSavePreview();
         setLoadingState(downloadBtn, true);
         progressSection.classList.remove('hidden');
 
@@ -388,11 +449,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         const apiBase = getApiBaseUrl() || '';
                         const fileUrl = apiBase + prog.download_url;
-                        saveFileLink.href = fileUrl;
-                        if (prog.filename) {
-                            saveFileLink.setAttribute('download', prog.filename);
+                        const filename = prog.filename || (mode === 'mp4' ? 'download.mp4' : 'download.mp3');
+                        const isMp4 = filename.toLowerCase().endsWith('.mp4') || mode === 'mp4';
+                        lastSavedLocalPath = prog.local_path || null;
+                        lastReadyFileUrl = fileUrl;
+                        lastReadyFilename = filename;
+                        lastReadyMimeType = isMp4 ? 'video/mp4' : 'audio/mpeg';
+
+                        savedFileName.textContent = filename;
+                        savedLocationText.textContent = getDefaultSaveLocation(lastSavedLocalPath);
+
+                        const inlineUrl = `${fileUrl}?inline=1`;
+                        mediaPreviewWrap.classList.remove('hidden');
+                        if (isMp4) {
+                            videoPreview.src = inlineUrl;
+                            videoPreview.classList.remove('hidden');
                         } else {
-                            saveFileLink.setAttribute('download', '');
+                            audioPreview.src = inlineUrl;
+                            audioPreview.classList.remove('hidden');
+                        }
+
+                        saveFileLink.href = fileUrl;
+                        saveFileLink.setAttribute('download', filename);
+                        if (typeof navigator.share === 'function') {
+                            shareFileBtn.classList.remove('hidden');
                         }
                         saveFileSection.classList.remove('hidden');
                         showStatus('success_download', false);
@@ -400,7 +480,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (!isIOS) {
                             const tempLink = document.createElement('a');
                             tempLink.href = fileUrl;
-                            tempLink.setAttribute('download', prog.filename || '');
+                            tempLink.setAttribute('download', filename);
                             document.body.appendChild(tempLink);
                             tempLink.click();
                             document.body.removeChild(tempLink);
@@ -437,6 +517,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressBar.style.backgroundColor = 'var(--warning)';
                 progressBar.style.animation = 'none';
             }
+        }
+    });
+
+    // Native Share / Save to Files or Photos (iOS & Android)
+    shareFileBtn.addEventListener('click', async () => {
+        if (!lastReadyFileUrl) return;
+        setLoadingState(shareFileBtn, true, 'loading');
+        try {
+            const resp = await fetch(lastReadyFileUrl);
+            if (!resp.ok) throw new Error('Fetch failed');
+            const blob = await resp.blob();
+            const file = new File([blob], lastReadyFilename || 'audiostudio.mp3', {
+                type: lastReadyMimeType || blob.type || 'application/octet-stream'
+            });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file], title: lastReadyFilename });
+            } else {
+                showStatus('share_unsupported', true);
+            }
+        } catch (err) {
+            if (err && err.name !== 'AbortError') {
+                showStatus('share_unsupported', true);
+            }
+        } finally {
+            setLoadingState(shareFileBtn, false);
         }
     });
 

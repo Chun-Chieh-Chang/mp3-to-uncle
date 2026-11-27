@@ -511,11 +511,49 @@ button:disabled {
 .save-file-section {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
     padding: 16px;
     border-radius: var(--radius-md);
     background-color: rgba(16, 185, 129, 0.08);
     border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+.save-meta-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-solid);
+    border: 1px solid var(--border);
+}
+
+.save-meta-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.save-filename,
+.save-location {
+    font-size: 14px;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.media-preview-wrap {
+    width: 100%;
+}
+
+.media-preview {
+    width: 100%;
+    border-radius: var(--radius-sm);
+    background-color: #000000;
+}
+
+audio.media-preview {
+    background-color: transparent;
+    min-height: 44px;
 }
 
 .save-hint {

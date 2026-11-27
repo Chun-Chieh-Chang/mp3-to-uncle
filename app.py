@@ -255,6 +255,7 @@ def api_progress(job_id):
         job = jobs.get(job_id)
         if not job:
             return jsonify({"success": False, "status": "not_found", "error": "Job not found"}), 404
+        is_local_req = (not IS_CLOUD) and request.remote_addr in ("127.0.0.1", "::1")
         payload = {
             "success": True,
             "job_id": job_id,
@@ -262,6 +263,7 @@ def api_progress(job_id):
             "progress": job["progress"],
             "download_url": job["download_url"],
             "filename": job["filename"],
+            "local_path": job["file_path"] if (is_local_req and job["status"] == "ready") else None,
             "error": job["error"],
         }
     return jsonify(payload)
@@ -269,6 +271,7 @@ def api_progress(job_id):
 
 @app.route("/api/files/<path:job_id_or_filename>", methods=["GET"])
 def serve_file(job_id_or_filename):
+    as_attachment = request.args.get("inline") != "1"
     with jobs_lock:
         job = jobs.get(job_id_or_filename)
         file_path = job.get("file_path") if job else None
@@ -279,10 +282,10 @@ def serve_file(job_id_or_filename):
         if resolved.is_file():
             ext = resolved.suffix.lower()
             mimetype = "audio/mpeg" if ext == ".mp3" else ("video/mp4" if ext == ".mp4" else None)
-            return send_file(resolved, as_attachment=True, download_name=filename, mimetype=mimetype)
+            return send_file(resolved, as_attachment=as_attachment, download_name=filename, mimetype=mimetype)
         return jsonify({"success": False, "error": "File no longer exists or has expired."}), 404
 
-    return send_from_directory(DOWNLOAD_DIR, job_id_or_filename, as_attachment=True)
+    return send_from_directory(DOWNLOAD_DIR, job_id_or_filename, as_attachment=as_attachment)
 
 
 if __name__ == "__main__":

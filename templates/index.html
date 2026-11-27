@@ -143,11 +143,29 @@
 
                     <!-- Explicit Save Section (Crucial for iOS Safari / Mobile browsers) -->
                     <div id="saveFileSection" class="save-file-section hidden">
+                        <div class="save-meta-box">
+                            <div class="save-meta-row">
+                                <span class="t-meta" data-en="File Name" data-zh="檔案名稱">檔案名稱</span>
+                                <strong id="savedFileName" class="save-filename"></strong>
+                            </div>
+                            <div class="save-meta-row">
+                                <span class="t-meta" data-en="Default Save Location" data-zh="預設儲存位置">預設儲存位置</span>
+                                <span id="savedLocationText" class="save-location"></span>
+                            </div>
+                        </div>
+                        <div id="mediaPreviewWrap" class="media-preview-wrap hidden">
+                            <audio id="audioPreview" controls class="media-preview hidden"></audio>
+                            <video id="videoPreview" controls playsinline class="media-preview hidden"></video>
+                        </div>
                         <a id="saveFileLink" class="btn-accent save-link-btn" href="#" download>
                             <span class="material-symbols-outlined">file_download_done</span>
                             <span data-en="Tap to Save File" data-zh="點擊儲存檔案">點擊儲存檔案</span>
                         </a>
-                        <p id="iosSaveHint" class="save-hint" data-en="iPhone users: Tap the button above and choose 'Download'. Your file will appear in the Files app -> Downloads." data-zh="iPhone 用戶點擊後請選擇「下載」，檔案會存放在「檔案 App → 下載項目」。">iPhone 用戶點擊後請選擇「下載」，檔案會存放在「檔案 App → 下載項目」。</p>
+                        <button type="button" id="shareFileBtn" class="btn-outline hidden">
+                            <span class="material-symbols-outlined">ios_share</span>
+                            <span data-en="Share / Save to Files or Photos" data-zh="分享 / 存到檔案或相簿">分享 / 存到檔案或相簿</span>
+                        </button>
+                        <p id="iosSaveHint" class="save-hint" data-en="iPhone users: Tap 'Tap to Save File' -> choose 'Download', then tap the blue '↓' icon in Safari's address bar or open Files app -> iCloud Drive / On My iPhone -> Downloads." data-zh="iPhone 用戶：點擊「點擊儲存檔案」並選「下載」後，可點 Safari 網址列藍色「↓」圖示直接開啟，或到「檔案 App → iCloud 雲碟 / 我的 iPhone → 下載項目」查看。">iPhone 用戶：點擊「點擊儲存檔案」並選「下載」後，可點 Safari 網址列藍色「↓」圖示直接開啟，或到「檔案 App → iCloud 雲碟 / 我的 iPhone → 下載項目」查看。</p>
                     </div>
                 </div>
             </div>

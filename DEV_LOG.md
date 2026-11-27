@@ -342,3 +342,12 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 1. Created project `.venv` and installed latest `yt-dlp[default]` (including `yt-dlp-ejs`) so `start_mobile_bridge.bat` automatically runs with up-to-date YouTube extractors and EJS support.
 2. Added `ANSI_RE` stripping to `_YdlCaptureLogger._sanitize()` and `_format_ydl_error()` in `downloader.py`.
 3. Updated `static/js/script.js` network error handlers to include the target backend URL.
+
+## [2026-11-27] Save-Location Display, Inline Media Preview & Native Share UX
+
+### Problem
+- Mobile/desktop users could not see where downloaded files were saved on their device or easily locate/play downloaded MP3/MP4 files on iOS Safari.
+
+### Corrective and Preventive Actions (CAPA)
+1. **`app.py`**: Added `local_path` in `/api/progress/<job_id>` exclusively for localhost requests (`127.0.0.1` / `::1` in local mode) and added `?inline=1` support in `/api/files/<job_id>` for browser `<audio>`/`<video>` preview playback.
+2. **`templates/index.html`, `static/css/style.css`, `static/js/script.js`**: Added `.save-meta-box` showing exact filename and OS-specific save path (iPhone/iPad Files app, Android Download, macOS Finder, Windows Downloads + localhost path), inline HTML5 audio/video preview player, and Web Share API (`navigator.share` with `files`) button to save directly into iOS Files / Photos.
