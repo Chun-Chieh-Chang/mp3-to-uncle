@@ -19,6 +19,7 @@ from downloader import (
     VALID_QUALITIES,
     download_media,
     ensure_ffmpeg,
+    get_diagnostics,
     get_js_runtimes,
     get_video_info,
     get_ytdlp_version,
@@ -112,6 +113,7 @@ def api_health():
         "yt_dlp_version": get_ytdlp_version(),
         "mode": "cloud" if IS_CLOUD else "local",
         "max_duration_seconds": MAX_DURATION_SECONDS,
+        **get_diagnostics(),
     })
 
 

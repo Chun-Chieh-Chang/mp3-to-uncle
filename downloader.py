@@ -201,25 +201,94 @@ def _get_ffmpeg_location():
     return str(BIN_DIR) if local_ffmpeg.exists() else None
 
 
-def _resolve_cookies_file():
-    """Return a valid cookies.txt path from YTDLP_COOKIES_FILE or decoded YTDLP_COOKIES_B64."""
+class _YdlCaptureLogger:
+    """Capture sanitized yt-dlp warnings so cloud failures expose root causes."""
+
+    def __init__(self, max_warnings=5):
+        self.max_warnings = max_warnings
+        self.warnings = []
+
+    @staticmethod
+    def _sanitize(msg):
+        text = str(msg).strip()
+        tmp_dir = str(Path(tempfile.gettempdir()))
+        if tmp_dir:
+            text = text.replace(tmp_dir, "[tmp]")
+        text = text.replace("audiostudio_cookies.txt", "[cookies]")
+        return text
+
+    def debug(self, msg):
+        pass
+
+    def warning(self, msg):
+        cleaned = self._sanitize(msg)
+        if not cleaned:
+            return
+        logger.warning("[yt-dlp] %s", cleaned)
+        if cleaned not in self.warnings and len(self.warnings) < self.max_warnings:
+            self.warnings.append(cleaned)
+
+    def error(self, msg):
+        logger.error("[yt-dlp] %s", self._sanitize(msg))
+
+    def format_diagnostics(self):
+        return " | ".join(self.warnings)
+
+
+def _format_ydl_error(err, ydl_logger):
+    """Combine exception message with captured yt-dlp warnings without duplication."""
+    base = str(err).strip()
+    diag = ydl_logger.format_diagnostics() if ydl_logger else ""
+    if diag and diag not in base:
+        return f"{base} [Diagnostics: {diag}]"
+    return base
+
+
+def _resolve_cookies_status():
+    """Validate and resolve cookies.txt path and safe diagnostic status."""
     cookies_file = os.environ.get("YTDLP_COOKIES_FILE", YTDLP_COOKIES_FILE).strip()
-    if cookies_file and Path(cookies_file).is_file():
-        return cookies_file
+    if cookies_file:
+        if Path(cookies_file).is_file():
+            return {"path": cookies_file, "loaded": True, "source": "file", "error": None}
+        return {"path": None, "loaded": False, "source": "file", "error": "Configured cookies file was not found."}
 
     cookies_b64 = os.environ.get("YTDLP_COOKIES_B64", YTDLP_COOKIES_B64).strip()
     if cookies_b64:
         try:
-            raw_bytes = base64.b64decode(cookies_b64)
+            compact_b64 = "".join(cookies_b64.split())
+            raw_bytes = base64.b64decode(compact_b64, validate=True)
+            decoded_text = raw_bytes.decode("utf-8-sig", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+            has_cookie_entry = any(
+                line.strip() and not line.lstrip().startswith("#") and "\t" in line
+                for line in decoded_text.splitlines()
+            )
+            if not has_cookie_entry:
+                return {
+                    "path": None,
+                    "loaded": False,
+                    "source": "b64",
+                    "error": "YTDLP_COOKIES_B64 does not contain valid Netscape tab-separated cookies.",
+                }
             target = Path(tempfile.gettempdir()) / "audiostudio_cookies.txt"
-            target.write_bytes(raw_bytes)
+            target.write_text(decoded_text, encoding="utf-8")
             if os.name != "nt":
                 os.chmod(target, 0o600)
-            return str(target)
+            return {"path": str(target), "loaded": True, "source": "b64", "error": None}
         except Exception as e:
-            logger.warning(f"Failed to decode YTDLP_COOKIES_B64: {e}")
+            logger.warning("Failed to decode YTDLP_COOKIES_B64: %s", type(e).__name__)
+            return {
+                "path": None,
+                "loaded": False,
+                "source": "b64",
+                "error": f"Failed to decode YTDLP_COOKIES_B64 ({type(e).__name__}).",
+            }
 
-    return None
+    return {"path": None, "loaded": False, "source": "none", "error": None}
+
+
+def _resolve_cookies_file():
+    """Return a valid cookies.txt path from YTDLP_COOKIES_FILE or decoded YTDLP_COOKIES_B64."""
+    return _resolve_cookies_status()["path"]
 
 
 def _resolve_player_clients():
@@ -231,22 +300,42 @@ def _resolve_player_clients():
     return None
 
 
-def _build_ydl_opts(extra_opts=None):
-    """Build shared yt-dlp options across info extraction and download."""
-    cookies_file = _resolve_cookies_file()
+def get_diagnostics():
+    """Return non-secret runtime diagnostics for /api/health."""
+    cookie_status = _resolve_cookies_status()
     clients = _resolve_player_clients()
+    proxy_configured = bool(os.environ.get("YTDLP_PROXY", "").strip())
+    return {
+        "cookies_loaded": cookie_status["loaded"],
+        "cookies_source": cookie_status["source"],
+        "cookies_error": cookie_status["error"],
+        "player_clients": clients if clients is not None else "default",
+        "proxy_configured": proxy_configured,
+    }
+
+
+def _build_ydl_opts(extra_opts=None, ydl_logger=None):
+    """Build shared yt-dlp options across info extraction and download."""
+    cookie_status = _resolve_cookies_status()
+    cookies_file = cookie_status["path"]
+    clients = _resolve_player_clients()
+    proxy = os.environ.get("YTDLP_PROXY", "").strip()
 
     opts = {
-        "quiet": True,
-        "no_warnings": True,
+        "quiet": ydl_logger is None,
+        "no_warnings": ydl_logger is None,
         "noplaylist": True,
         "ffmpeg_location": _get_ffmpeg_location(),
         "js_runtimes": {"deno": {}, "node": {}, "bun": {}, "quickjs": {}},
     }
+    if ydl_logger is not None:
+        opts["logger"] = ydl_logger
     if clients:
         opts["extractor_args"] = {"youtube": {"player_client": clients}}
     if cookies_file:
         opts["cookiefile"] = cookies_file
+    if proxy:
+        opts["proxy"] = proxy
     if extra_opts:
         opts.update(extra_opts)
     return opts
@@ -255,16 +344,17 @@ def _build_ydl_opts(extra_opts=None):
 def get_video_info(url):
     """Get metadata for a video link (YouTube, TikTok, etc. via yt-dlp)."""
     url = _clean_url(validate_url(url))
+    ydl_logger = _YdlCaptureLogger()
     ydl_opts = _build_ydl_opts({
         "skip_download": True,
         "socket_timeout": 30,
-    })
+    }, ydl_logger=ydl_logger)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=False)
             if not info_dict:
-                return {"success": False, "error": "Unable to extract video metadata."}
+                return {"success": False, "error": _format_ydl_error("Unable to extract video metadata.", ydl_logger)}
 
             title = info_dict.get("title", "Unknown Title")
             thumbnail = info_dict.get("thumbnail", "")
@@ -286,7 +376,7 @@ def get_video_info(url):
             }
     except Exception as e:
         logger.error(f"Failed to get video info: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": _format_ydl_error(e, ydl_logger)}
 
 
 def download_media(url, mode="mp3", quality="192", progress_hook=None, output_dir=None):
@@ -303,10 +393,11 @@ def download_media(url, mode="mp3", quality="192", progress_hook=None, output_di
     target_dir = Path(output_dir) if output_dir else DOWNLOAD_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    ydl_logger = _YdlCaptureLogger()
     ydl_opts = _build_ydl_opts({
         "outtmpl": str(target_dir / "%(title).80s.%(ext)s"),
         "socket_timeout": 60,
-    })
+    }, ydl_logger=ydl_logger)
 
     if MAX_DURATION_SECONDS > 0:
         def _duration_filter(info_dict, *, incomplete=False):
@@ -371,7 +462,7 @@ def download_media(url, mode="mp3", quality="192", progress_hook=None, output_di
             return {"success": True, "file_path": filename, "title": info.get("title")}
     except Exception as e:
         logger.error(f"Download failed: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": _format_ydl_error(e, ydl_logger)}
 
 
 def ensure_ffmpeg():

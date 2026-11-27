@@ -272,3 +272,17 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 ### Verification (PDCA Check)
 - `py_compile` (`app.py`, `downloader.py`) and unit assertions (`_resolve_player_clients()`, `_build_ydl_opts()`, Flask `test_client().get('/api/health')` returning `js_runtimes: ['node']`, `yt_dlp_version: '2026.11.23'`) passed.
 - Real E2E `downloader.download_media("https://youtu.be/-gQUPWstYDI", mode="mp3", quality="128")` succeeded and produced a valid `.mp3` file (`4,532,013` bytes).
+
+## [2026-11-27] Cloud YouTube Diagnostics, Cookies Validation & Proxy Support
+
+### Problem
+- On Render cloud deployment, YouTube extraction returned only `Failed to extract any player response`, hiding underlying per-client warnings (`report_warning` in `yt-dlp`'s `_video.py`) and offering no visibility into whether `YTDLP_COOKIES_B64` loaded properly.
+
+### Root Cause Analysis (RCA)
+1. `downloader.py` set `no_warnings: True` and `quiet: True` with no logger hook, suppressing `yt-dlp`'s per-client warnings (cookie expiration, bot challenge, or PO token notices).
+2. `YTDLP_COOKIES_B64` decoding lacked whitespace/BOM sanitization and Netscape format validation, and `/api/health` did not surface `cookies_loaded` or active `player_clients`.
+
+### Corrective and Preventive Actions (CAPA)
+1. Added `_YdlCaptureLogger` in `downloader.py` (sanitizing temp/cookie paths) and attached it to `get_video_info` and `download_media` so real `yt-dlp` warnings appear in both Render logs and API error responses.
+2. Hardened `_resolve_cookies_status()` to strip whitespace/UTF-8 BOM, validate Netscape tab-separated cookie lines, and report safe status via `get_diagnostics()` in `/api/health` (plus `YTDLP_PROXY` support).
+3. Preserved `94aa0a8`'s native `yt-dlp` client default and multi-JS runtime detection (`deno`, `node`, `bun`, `quickjs`).
