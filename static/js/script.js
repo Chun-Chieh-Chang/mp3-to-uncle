@@ -1,6 +1,9 @@
 document.addEventListener('DOMContentLoaded', () => {
     const STORAGE_API_KEY = 'audiostudio_api_base';
+    const STORAGE_BRIDGE_GIST_KEY = 'audiostudio_bridge_gist';
     const STORAGE_THEME_KEY = 'audiostudio_theme';
+    const GIST_ID_RE = /^[a-f0-9]{20,64}$/i;
+    const BRIDGE_REFRESH_COOLDOWN_MS = 10000;
     const POLL_INTERVAL_MS = 1000;
     const MAX_POLL_ERRORS = 3;
 
@@ -69,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastReadyFileUrl = '';
     let lastReadyFilename = '';
     let lastReadyMimeType = '';
+    let lastBridgeRefreshAt = 0;
 
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -100,7 +104,11 @@ document.addEventListener('DOMContentLoaded', () => {
             settings_saved: 'Server settings saved.',
             settings_reset: 'Server settings cleared.',
             api_autoconnect: 'Connected to custom backend from link!',
-            share_unsupported: 'Your browser does not support direct file sharing. Please use "Tap to Save File" above.'
+            share_unsupported: 'Your browser does not support direct file sharing. Please use "Tap to Save File" above.',
+            bridge_connecting: 'Connecting to your fixed home PC server...',
+            bridge_connected: 'Connected to your fixed home PC server!',
+            bridge_offline: 'Home PC server is currently offline. Please run start_mobile_bridge.bat on your PC.',
+            bridge_fetch_fail: 'Unable to look up latest home server address. Check your network and try again.'
         },
         zh: {
             placeholder: '在此貼上影片連結...',
@@ -125,7 +133,11 @@ document.addEventListener('DOMContentLoaded', () => {
             settings_saved: '已儲存伺服器設定。',
             settings_reset: '已清除自訂伺服器設定。',
             api_autoconnect: '已從專屬連結自動連線至後端伺服器！',
-            share_unsupported: '此瀏覽器不支援直接分享檔案，請點擊上方「點擊儲存檔案」。'
+            share_unsupported: '此瀏覽器不支援直接分享檔案，請點擊上方「點擊儲存檔案」。',
+            bridge_connecting: '正在連線至固定家用電腦伺服器...',
+            bridge_connected: '已自動連線至最新家用電腦伺服器！',
+            bridge_offline: '家用電腦伺服器目前未開機，請先在電腦啟動 start_mobile_bridge.bat。',
+            bridge_fetch_fail: '無法取得最新家用伺服器位址，請確認網路後再試。'
         }
     };
 
@@ -142,6 +154,77 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function normalizeApiUrl(raw) {
         return (raw || '').trim().replace(/\/+$/, '');
+    }
+
+    function isValidBackendUrl(raw) {
+        try {
+            const parsed = new URL((raw || '').trim());
+            const isLocalHttp = parsed.protocol === 'http:' &&
+                (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+            if (parsed.protocol === 'https:' || isLocalHttp) {
+                return normalizeApiUrl(parsed.origin + parsed.pathname);
+            }
+        } catch {
+            // Ignore malformed URL
+        }
+        return null;
+    }
+
+    function getSavedBridgeGistId() {
+        try {
+            const currentPageUrl = new URL(window.location.href);
+            const urlGist = (currentPageUrl.searchParams.get('bridge') || '').trim();
+            if (GIST_ID_RE.test(urlGist)) {
+                localStorage.setItem(STORAGE_BRIDGE_GIST_KEY, urlGist);
+                return urlGist;
+            }
+        } catch {
+            // Ignore URL parse failures
+        }
+        const stored = (localStorage.getItem(STORAGE_BRIDGE_GIST_KEY) || '').trim();
+        return GIST_ID_RE.test(stored) ? stored : null;
+    }
+
+    async function resolveBridgeFromGist(gistId, { silent = false } = {}) {
+        if (!gistId || !GIST_ID_RE.test(gistId)) {
+            return { ok: false, offline: false, apiUrl: null };
+        }
+        try {
+            const resp = await fetch(`https://api.github.com/gists/${gistId}`, {
+                cache: 'no-store',
+                headers: { Accept: 'application/vnd.github+json' }
+            });
+            if (!resp.ok) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
+            const gistData = await resp.json();
+            const fileObj = gistData && gistData.files && gistData.files['audiostudio_bridge.json'];
+            if (!fileObj || !fileObj.content) {
+                throw new Error('Missing bridge pointer file');
+            }
+            const payload = JSON.parse(fileObj.content);
+            const validUrl = isValidBackendUrl(payload.api_url);
+            if (payload.status === 'offline') {
+                if (!silent) {
+                    showStatus('bridge_offline', true);
+                }
+                return { ok: false, offline: true, apiUrl: validUrl };
+            }
+            if (!validUrl) {
+                throw new Error('Invalid api_url in bridge pointer');
+            }
+            localStorage.setItem(STORAGE_API_KEY, validUrl);
+            refreshBackendNotice();
+            if (!silent) {
+                showStatus('bridge_connected', false);
+            }
+            return { ok: true, offline: false, apiUrl: validUrl };
+        } catch {
+            if (!silent) {
+                showStatus('bridge_fetch_fail', true);
+            }
+            return { ok: false, offline: false, apiUrl: null };
+        }
     }
 
     function getApiBaseUrl() {
@@ -319,13 +402,41 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function apiFetch(endpoint, options = {}) {
-        const apiBase = getApiBaseUrl();
+        const { allowBridgeRefresh = true, ...fetchOptions } = options;
+        let apiBase = getApiBaseUrl();
+        const gistId = getSavedBridgeGistId();
+
+        if (apiBase === null && allowBridgeRefresh && gistId) {
+            lastBridgeRefreshAt = Date.now();
+            const initRes = await resolveBridgeFromGist(gistId, { silent: true });
+            if (initRes.ok && initRes.apiUrl) {
+                apiBase = initRes.apiUrl;
+            } else if (initRes.offline) {
+                showStatus('bridge_offline', true);
+                throw new Error('NO_BACKEND');
+            }
+        }
+
         if (apiBase === null) {
             showStatus('error_no_backend', true);
             refreshBackendNotice();
             throw new Error('NO_BACKEND');
         }
-        return fetch(apiBase + endpoint, options);
+        try {
+            return await fetch(apiBase + endpoint, fetchOptions);
+        } catch (err) {
+            if (allowBridgeRefresh && gistId && (Date.now() - lastBridgeRefreshAt > BRIDGE_REFRESH_COOLDOWN_MS)) {
+                lastBridgeRefreshAt = Date.now();
+                const res = await resolveBridgeFromGist(gistId, { silent: true });
+                if (res.ok && res.apiUrl && res.apiUrl !== apiBase) {
+                    return await fetch(res.apiUrl + endpoint, fetchOptions);
+                }
+                if (res.offline) {
+                    showStatus('bridge_offline', true);
+                }
+            }
+            throw err;
+        }
     }
 
     urlInput.addEventListener('keypress', (e) => {
@@ -415,7 +526,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             activePollTimer = setInterval(async () => {
                 try {
-                    const progResp = await apiFetch(`/api/progress/${jobId}`);
+                    const progResp = await apiFetch(`/api/progress/${jobId}`, { allowBridgeRefresh: false });
                     const prog = await progResp.json();
                     transientErrors = 0;
 
@@ -590,6 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     saveSettingsBtn.addEventListener('click', () => {
         const cleaned = normalizeApiUrl(apiBaseInput.value);
+        localStorage.removeItem(STORAGE_BRIDGE_GIST_KEY);
         if (cleaned) {
             localStorage.setItem(STORAGE_API_KEY, cleaned);
         } else {
@@ -601,6 +713,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     resetSettingsBtn.addEventListener('click', () => {
         localStorage.removeItem(STORAGE_API_KEY);
+        localStorage.removeItem(STORAGE_BRIDGE_GIST_KEY);
+        try {
+            const currentPageUrl = new URL(window.location.href);
+            if (currentPageUrl.searchParams.has('bridge')) {
+                currentPageUrl.searchParams.delete('bridge');
+                window.history.replaceState({}, '', currentPageUrl.pathname + currentPageUrl.search + currentPageUrl.hash);
+            }
+        } catch {
+            // Ignore URL history cleanup failure
+        }
         apiBaseInput.value = normalizeApiUrl(cfg.apiBaseUrl);
         refreshBackendNotice();
         showSettingsStatus(translations[currentLang].settings_reset, false);
@@ -626,30 +748,28 @@ document.addEventListener('DOMContentLoaded', () => {
         const apiParam = currentPageUrl.searchParams.get('api');
         if (!apiParam) return false;
 
-        try {
-            const parsed = new URL(apiParam.trim());
-            const isLocalHttp = parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
-            if (parsed.protocol === 'https:' || isLocalHttp) {
-                const cleaned = normalizeApiUrl(parsed.origin + parsed.pathname);
-                localStorage.setItem(STORAGE_API_KEY, cleaned);
-                currentPageUrl.searchParams.delete('api');
-                window.history.replaceState({}, '', currentPageUrl.pathname + currentPageUrl.search + currentPageUrl.hash);
-                return true;
-            }
-        } catch {
-            // Ignore malformed ?api= param
+        const cleaned = isValidBackendUrl(apiParam);
+        if (cleaned) {
+            localStorage.setItem(STORAGE_API_KEY, cleaned);
+            currentPageUrl.searchParams.delete('api');
+            window.history.replaceState({}, '', currentPageUrl.pathname + currentPageUrl.search + currentPageUrl.hash);
+            return true;
         }
         return false;
     }
 
     // Initialize UI
     const didAutoConnect = applyApiParamFromUrl();
+    const bridgeGistId = getSavedBridgeGistId();
     updateLanguage();
     syncQualityVisibility();
     syncClearButton();
     refreshBackendNotice();
     if (didAutoConnect) {
         showStatus('api_autoconnect', false);
+    } else if (bridgeGistId) {
+        showStatus('bridge_connecting', false);
+        resolveBridgeFromGist(bridgeGistId);
     }
 });
 

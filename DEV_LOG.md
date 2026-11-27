@@ -351,3 +351,16 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 ### Corrective and Preventive Actions (CAPA)
 1. **`app.py`**: Added `local_path` in `/api/progress/<job_id>` exclusively for localhost requests (`127.0.0.1` / `::1` in local mode) and added `?inline=1` support in `/api/files/<job_id>` for browser `<audio>`/`<video>` preview playback.
 2. **`templates/index.html`, `static/css/style.css`, `static/js/script.js`**: Added `.save-meta-box` showing exact filename and OS-specific save path (iPhone/iPad Files app, Android Download, macOS Finder, Windows Downloads + localhost path), inline HTML5 audio/video preview player, and Web Share API (`navigator.share` with `files`) button to save directly into iOS Files / Photos.
+
+## [2026-11-27] Fixed QR Code / URL via Secret GitHub Gist Dynamic Pointer (Route A)
+
+### Problem
+- Free Cloudflare Quick Tunnels (`*.trycloudflare.com`) and `localhost.run` assign a fresh random HTTPS subdomain on every restart of `start_mobile_bridge.bat`, forcing iPhone/Android users to re-scan a new QR code every time the PC restarts.
+
+### Root Cause Analysis (RCA)
+- Home broadband lacks a static public IP + trusted TLS certificate by default, while embedding transient tunnel origins in `?api=` ties the QR code lifetime to a single tunnel process.
+
+### Corrective and Preventive Actions (CAPA)
+1. **`mobile_bridge.py`, `.gitignore`**: Added `sync_fixed_bridge_gist()` using a Secret GitHub Gist (`audiostudio_bridge.json`, resolved via `GITHUB_GIST_TOKEN`, `.bridge_config.json`, or `gh auth token`). On startup it creates or `PATCH`es the same Gist with the active tunnel URL (`status: "online"`), and marks `status: "offline"` on clean shutdown; ignored `.bridge_config.json` in `.gitignore`.
+2. **`app.py`, `templates/bridge.html`**: Validated `gist` query param against `GIST_ID_RE` and prioritized the permanent URL (`?bridge=<gist_id>`) for QR rendering.
+3. **`static/js/script.js`, `static/sw.js`**: Added `getSavedBridgeGistId()` (retaining `?bridge=` in the URL so iOS "Add to Home Screen" PWAs preserve the fixed pointer across isolated Safari/PWA storage), `resolveBridgeFromGist()`, automatic self-healing reconnection inside `apiFetch()` (with 10s cooldown and polling opt-out), offline detection, and bumped Service Worker cache to `audiostudio-v3`.

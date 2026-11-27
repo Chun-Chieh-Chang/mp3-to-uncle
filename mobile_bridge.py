@@ -1,3 +1,5 @@
+import datetime
+import json
 import logging
 import os
 import re
@@ -6,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -17,6 +20,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent.resolve()
+BRIDGE_CONFIG_PATH = BASE_DIR / ".bridge_config.json"
+GIST_FILENAME = "audiostudio_bridge.json"
+GITHUB_GISTS_API = "https://api.github.com/gists"
+GIST_ID_RE = re.compile(r"^[a-f0-9]{20,64}$", re.IGNORECASE)
 CLOUDFLARED_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
 TUNNEL_URL_RE = re.compile(
     r"https://[a-z0-9-]+\.(?:trycloudflare\.com|lhr\.life|lhr\.rocks)",
@@ -228,6 +235,173 @@ def _start_localhost_run_tunnel(port):
     return None, None
 
 
+def _find_gh_binary():
+    """Locate GitHub CLI (`gh`) binary on PATH or standard Windows install paths."""
+    on_path = shutil.which("gh")
+    if on_path:
+        return on_path
+    if os.name == "nt":
+        candidates = [
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "GitHub CLI" / "gh.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "GitHub CLI" / "gh.exe",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+def _load_bridge_config():
+    """Load local `.bridge_config.json` safely, returning a dict."""
+    if not BRIDGE_CONFIG_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(BRIDGE_CONFIG_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.warning("Failed to read %s: %s", BRIDGE_CONFIG_PATH.name, e)
+        return {}
+
+
+def _save_bridge_config(config):
+    """Persist bridge configuration to `.bridge_config.json`."""
+    try:
+        BRIDGE_CONFIG_PATH.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.warning("Failed to write %s: %s", BRIDGE_CONFIG_PATH.name, e)
+
+
+def _resolve_github_token(config):
+    """Resolve GitHub token from env, config file, or local `gh auth token`."""
+    env_token = (os.environ.get("GITHUB_GIST_TOKEN") or "").strip()
+    if env_token:
+        return env_token
+
+    cfg_token = str(config.get("github_token") or "").strip()
+    if cfg_token:
+        return cfg_token
+
+    gh_bin = _find_gh_binary()
+    if not gh_bin:
+        return None
+
+    try:
+        res = subprocess.run(
+            [gh_bin, "auth", "token"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        token = (res.stdout or "").strip()
+        if res.returncode == 0 and token:
+            return token
+    except Exception as e:
+        logger.warning("Failed to obtain token from gh CLI: %s", e)
+    return None
+
+
+def _github_gist_request(method, url, token, payload, timeout=10):
+    """Send a JSON request to the GitHub Gists API and return (status, dict_or_none)."""
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+            "User-Agent": "AudioStudio-Bridge",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            return resp.status, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as err:
+        raw = err.read().decode("utf-8", errors="replace") if err.fp else ""
+        try:
+            parsed = json.loads(raw) if raw else None
+        except ValueError:
+            parsed = None
+        return err.code, parsed
+
+
+def sync_fixed_bridge_gist(tunnel_url, status="online", timeout=10):
+    """Create or update a Secret GitHub Gist pointing to the active tunnel URL."""
+    try:
+        config = _load_bridge_config()
+        token = _resolve_github_token(config)
+        if not token:
+            return None
+
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        pointer_payload = {
+            "api_url": tunnel_url,
+            "status": status,
+            "updated_at": now_iso,
+        }
+        content_str = json.dumps(pointer_payload, ensure_ascii=False, indent=2)
+
+        raw_gist_id = str(config.get("gist_id") or "").strip()
+        gist_id = raw_gist_id if GIST_ID_RE.match(raw_gist_id) else None
+
+        if gist_id:
+            code, resp_data = _github_gist_request(
+                "PATCH",
+                f"{GITHUB_GISTS_API}/{gist_id}",
+                token,
+                {"files": {GIST_FILENAME: {"content": content_str}}},
+                timeout=timeout,
+            )
+            if code == 200:
+                config["gist_id"] = gist_id
+                config["updated_at"] = now_iso
+                _save_bridge_config(config)
+                return gist_id
+            if code != 404:
+                msg = (resp_data or {}).get("message", f"HTTP {code}")
+                logger.warning("Failed to update Gist %s: %s", gist_id, msg)
+                return None
+            # Gist no longer exists on GitHub; recreate only when coming online
+            gist_id = None
+            config.pop("gist_id", None)
+
+        if status != "online":
+            return None
+
+        code, resp_data = _github_gist_request(
+            "POST",
+            GITHUB_GISTS_API,
+            token,
+            {
+                "description": "AudioStudio Fixed Mobile Bridge Pointer",
+                "public": False,
+                "files": {GIST_FILENAME: {"content": content_str}},
+            },
+            timeout=timeout,
+        )
+        new_id = str((resp_data or {}).get("id") or "").strip()
+        if code in (200, 201) and GIST_ID_RE.match(new_id):
+            config["gist_id"] = new_id
+            config["updated_at"] = now_iso
+            _save_bridge_config(config)
+            return new_id
+
+        msg = (resp_data or {}).get("message", f"HTTP {code}")
+        logger.warning("Failed to create Secret Gist: %s", msg)
+        return None
+    except Exception as e:
+        logger.warning("Unexpected error syncing fixed bridge Gist: %s", e)
+        return None
+
+
 def main():
     if "--check" in sys.argv[1:]:
         print(f"MOBILE_BRIDGE_CHECK_OK python={sys.executable}")
@@ -238,6 +412,8 @@ def main():
 
     flask_proc = None
     tunnel_proc = None
+    tunnel_url = None
+    gist_id = None
     try:
         print(f"[Mobile Bridge] 正在啟動本機 AudioStudio 後端 (http://0.0.0.0:{port})...")
         flask_env = os.environ.copy()
@@ -265,20 +441,30 @@ def main():
         if not tunnel_url and not lan_url:
             raise RuntimeError("無法建立外部 HTTPS 通道，且未偵測到區域網路 IP。")
 
+        if tunnel_url:
+            gist_id = sync_fixed_bridge_gist(tunnel_url, status="online")
+
         query = {}
         if tunnel_url:
             query["tunnel"] = tunnel_url
         if lan_url:
             query["lan"] = lan_url
+        if gist_id:
+            query["gist"] = gist_id
         bridge_page_url = f"http://127.0.0.1:{port}/bridge?{urllib.parse.urlencode(query)}"
 
         print("\n" + "=" * 68)
         print("  AudioStudio 手機橋接已啟動！(iPhone / Android / Mac 皆可用)")
         print("=" * 68)
-        if tunnel_url:
+        if gist_id and tunnel_url:
+            fixed_bridge_url = f"{PAGES_URL}?bridge={gist_id}"
+            print(f"  [永久固定網址] 手機掃過一次永久不用重掃:\n  {fixed_bridge_url}\n")
+            print(f"  本次通道位址 (已自動同步至上述固定網址):\n  {tunnel_url}")
+        elif tunnel_url:
             mobile_connect_url = f"{PAGES_URL}?api={urllib.parse.quote(tunnel_url, safe='')}"
-            print(f"  手機掃碼自動連線網址:\n  {mobile_connect_url}\n")
+            print(f"  手機掃碼自動連線網址 (本次有效):\n  {mobile_connect_url}\n")
             print(f"  直連通道備用網址:\n  {tunnel_url}")
+            print("  [提示] 若要啟用永久固定 QR Code，請先執行 `gh auth login` 或設定 GITHUB_GIST_TOKEN。")
         else:
             print("  [提示] 外部免費通道暫時壅塞，已自動切換為「同 Wi-Fi 區網直連模式」！")
         if lan_url:
@@ -301,6 +487,8 @@ def main():
     except KeyboardInterrupt:
         print("\n[Mobile Bridge] 正在關閉橋接服務...")
     finally:
+        if gist_id and tunnel_url:
+            sync_fixed_bridge_gist(tunnel_url, status="offline", timeout=3)
         _terminate_proc(tunnel_proc)
         _terminate_proc(flask_proc)
         print("[Mobile Bridge] 已安全關閉。")

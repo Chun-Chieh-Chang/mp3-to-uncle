@@ -82,11 +82,13 @@
         </header>
 
         <section class="downloader-card">
-            {% set primary_qr_url = mobile_connect_url or lan_url %}
+            {% set primary_qr_url = fixed_bridge_url or mobile_connect_url or lan_url %}
             {% if primary_qr_url %}
             <div class="bridge-badge">
                 <span class="material-symbols-outlined">check_circle</span>
-                {% if mobile_connect_url %}
+                {% if fixed_bridge_url %}
+                <span>永久固定 QR Code 已啟用（重啟電腦不變）</span>
+                {% elif mobile_connect_url %}
                 <span>家用電腦外網橋接已啟動（Mobile Bridge Active）</span>
                 {% else %}
                 <span>家用同 Wi-Fi 區網橋接已啟動（Local Wi-Fi Mode）</span>
@@ -105,7 +107,16 @@
                 <p id="qrFallbackMsg" class="t-meta hidden">無法載入 QR Code 繪製套件，請直接複製下方連結到手機開啟。</p>
             </div>
 
-            {% if mobile_connect_url %}
+            {% if fixed_bridge_url %}
+            <div class="url-box">
+                <span class="t-label">永久固定手機連線網址（掃過一次永久有效，重啟免重掃）</span>
+                <code id="fixedBridgeCode" class="url-code">{{ fixed_bridge_url }}</code>
+                <button type="button" id="copyFixedBtn" class="btn-primary">
+                    <span class="material-symbols-outlined">content_copy</span>
+                    <span>複製永久固定網址</span>
+                </button>
+            </div>
+            {% elif mobile_connect_url %}
             <div class="url-box">
                 <span class="t-label">iPhone / 手機掃碼連線網址（外網 / 5G / Wi-Fi 皆可用）</span>
                 <code id="mobileConnectCode" class="url-code">{{ mobile_connect_url }}</code>
@@ -114,7 +125,9 @@
                     <span>複製手機專屬連線網址</span>
                 </button>
             </div>
+            {% endif %}
 
+            {% if tunnel_url %}
             <div class="url-box">
                 <span class="t-label">直連通道備用網址（直接開也可使用）</span>
                 <code id="tunnelCode" class="url-code">{{ tunnel_url }}</code>
@@ -137,6 +150,11 @@
             {% endif %}
 
             <ol class="steps-list">
+                {% if fixed_bridge_url %}
+                <li>拿起 <strong>iPhone 相機</strong>掃描上方永久固定 QR Code，用 <strong>Safari</strong> 開啟（強烈建議按「分享 → 加入主畫面」）。</li>
+                <li>之後即使電腦重開機或重啟 <code>start_mobile_bridge.bat</code>，這個 QR Code 與主畫面捷徑都<strong>不會改變</strong>，打開就會自動連上最新的家用伺服器。</li>
+                <li>不用時關閉電腦上的黑色橋接視窗即可停止服務。</li>
+                {% else %}
                 <li>拿起 <strong>iPhone 相機</strong>直接掃描上方 QR Code，點擊跳出的黃色網址（務必以 <strong>Safari</strong> 開啟）。</li>
                 {% if mobile_connect_url %}
                 <li>手機會自動連上這台電腦並顯示「已從專屬連結自動連線至後端伺服器！」，之後即可直接貼 YouTube / TikTok 下載 MP3 或 MP4。</li>
@@ -144,6 +162,7 @@
                 <li>確認手機與電腦在同一個家用 Wi-Fi，打開後即可直接貼 YouTube / TikTok 下載 MP3 或 MP4。</li>
                 {% endif %}
                 <li>不用時把電腦上的黑色橋接視窗關掉即立即斷線。</li>
+                {% endif %}
             </ol>
             {% else %}
             <div class="status-message status-error">
@@ -168,6 +187,7 @@
             document.documentElement.setAttribute('data-theme', savedTheme);
 
             const primaryQrUrl = {{ primary_qr_url | tojson }};
+            const fixedUrl = {{ fixed_bridge_url | tojson }};
             const mobileUrl = {{ mobile_connect_url | tojson }};
             const tunnelUrl = {{ tunnel_url | tojson }};
             const lanUrl = {{ lan_url | tojson }};
@@ -197,6 +217,7 @@
                 });
             }
 
+            bindCopy('copyFixedBtn', fixedUrl);
             bindCopy('copyMobileBtn', mobileUrl);
             bindCopy('copyTunnelBtn', tunnelUrl);
             bindCopy('copyLanBtn', lanUrl);

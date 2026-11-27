@@ -48,6 +48,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 LAN_URL_RE = re.compile(
     r"^http://(?:192\.168|10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}:\d{1,5}$"
 )
+GIST_ID_RE = re.compile(r"^[a-f0-9]{20,64}$", re.IGNORECASE)
 
 # Ensure FFmpeg is available on startup only when missing
 if not has_ffmpeg():
@@ -117,7 +118,11 @@ def serve_bridge():
         except ValueError:
             lan_url = ""
 
+    raw_gist = (request.args.get("gist") or "").strip()
+    gist_id = raw_gist if GIST_ID_RE.match(raw_gist) else ""
+
     pages_url = "https://chun-chieh-chang.github.io/mp3-to-uncle/"
+    fixed_bridge_url = f"{pages_url}?bridge={gist_id}" if gist_id else ""
     mobile_connect_url = (
         f"{pages_url}?api={urllib.parse.quote(tunnel_url, safe='')}"
         if tunnel_url
@@ -125,6 +130,8 @@ def serve_bridge():
     )
     return render_template(
         "bridge.html",
+        gist_id=gist_id,
+        fixed_bridge_url=fixed_bridge_url,
         tunnel_url=tunnel_url,
         mobile_connect_url=mobile_connect_url,
         lan_url=lan_url,
