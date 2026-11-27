@@ -2,6 +2,7 @@ import base64
 import ipaddress
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,7 @@ YTDLP_COOKIES_B64 = os.environ.get("YTDLP_COOKIES_B64", "").strip()
 
 VALID_MODES = ("mp3", "mp4")
 VALID_QUALITIES = ("128", "192", "256", "320")
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 JS_RUNTIME_BINARIES = (
@@ -210,7 +212,7 @@ class _YdlCaptureLogger:
 
     @staticmethod
     def _sanitize(msg):
-        text = str(msg).strip()
+        text = ANSI_RE.sub("", str(msg)).strip()
         tmp_dir = str(Path(tempfile.gettempdir()))
         if tmp_dir:
             text = text.replace(tmp_dir, "[tmp]")
@@ -237,7 +239,7 @@ class _YdlCaptureLogger:
 
 def _format_ydl_error(err, ydl_logger):
     """Combine exception message with captured yt-dlp warnings without duplication."""
-    base = str(err).strip()
+    base = ANSI_RE.sub("", str(err)).strip()
     diag = ydl_logger.format_diagnostics() if ydl_logger else ""
     if diag and diag not in base:
         return f"{base} [Diagnostics: {diag}]"

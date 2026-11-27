@@ -311,3 +311,34 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 1. Added `.gitattributes` (`*.bat text eol=crlf`) to enforce CRLF on all batch scripts permanently.
 2. Rewrote `start_mobile_bridge.bat` using pure ASCII, flat `goto` labels (no parenthesized blocks), and strict CRLF (`\r\n`) line endings, with `--check` passthrough for non-interactive testing.
 3. Added `--check` fast-path to `mobile_bridge.py` and verified directly via `cmd /c start_mobile_bridge.bat --check`.
+
+## [2026-11-27] 3-Tier Mobile Bridge Tunnel Fallback (Cloudflare -> localhost.run -> Home Wi-Fi LAN)
+
+### Problem
+- Running `start_mobile_bridge.bat` succeeded on Python/Flask startup, then hit Cloudflare Quick Tunnel rate-limiting:
+  `quick tunnel provisioning failed with status 429: [10000] Tunnelstore request failed`.
+
+### Root Cause Analysis (RCA)
+- `mobile_bridge.py` relied exclusively on Cloudflare Quick Tunnels (unauthenticated shared `trycloudflare.com` provisioning endpoint), crashing completely on transient `429` throttling.
+
+### Corrective and Preventive Actions (CAPA)
+1. Implemented a 3-tier fallback chain in `mobile_bridge.py`:
+   - Tier 1: Cloudflare Quick Tunnel (`cloudflared`), with 1 retry after 3s on `429`.
+   - Tier 2: Zero-signup HTTPS SSH tunnel via Windows built-in OpenSSH (`nokey@localhost.run` -> `lhr.life` / `lhr.rocks`).
+   - Tier 3: Home Wi-Fi LAN direct access (`http://<LAN_IP>:5000`, binding Flask to `0.0.0.0`).
+2. Updated `/bridge` (`app.py`) and `templates/bridge.html` with strict private-IP `LAN_URL_RE` validation and automatic LAN QR code fallback rendering.
+
+## [2026-11-27] Local `.venv` (`yt-dlp[default]`) & ANSI/Network Error UX Polish
+
+### Problem
+- Desktop YouTube download hit `HTTP Error 403: Forbidden` (with raw ANSI escape codes `[0;31mERROR:[0m`), while iPhone on 4G reported `獲取資訊時發生網路錯誤` without showing which backend URL failed.
+
+### Root Cause Analysis (RCA)
+1. System Python 3.14 ran outdated `yt-dlp 2026.06.09` without `yt-dlp-ejs` (`yt_dlp[default]`), leaving Node.js unused for YouTube `n`-challenge solving.
+2. `downloader.py` returned raw `str(err)` containing ANSI escape codes.
+3. `script.js` hid the target backend URL on network errors, making it unclear whether mobile was calling a home LAN IP over 4G or a deleted cloud host.
+
+### Corrective and Preventive Actions (CAPA)
+1. Created project `.venv` and installed latest `yt-dlp[default]` (including `yt-dlp-ejs`) so `start_mobile_bridge.bat` automatically runs with up-to-date YouTube extractors and EJS support.
+2. Added `ANSI_RE` stripping to `_YdlCaptureLogger._sanitize()` and `_format_ydl_error()` in `downloader.py`.
+3. Updated `static/js/script.js` network error handlers to include the target backend URL.

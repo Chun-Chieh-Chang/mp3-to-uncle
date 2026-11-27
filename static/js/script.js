@@ -311,7 +311,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             if (error.message !== 'NO_BACKEND') {
-                showStatus('error_network', true);
+                const target = getApiBaseUrl() || window.location.origin;
+                showStatus(null, true, `${translations[currentLang].error_network} (${target})`);
             }
         } finally {
             setLoadingState(fetchBtn, false);
@@ -419,7 +420,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (transientErrors >= MAX_POLL_ERRORS) {
                         stopPolling();
                         setLoadingState(downloadBtn, false);
-                        showStatus('error_network_download', true);
+                        const target = getApiBaseUrl() || window.location.origin;
+                        showStatus(null, true, `${translations[currentLang].error_network_download} (${target})`);
                         progressStatusText.textContent = translations[currentLang].failed;
                         progressBar.style.backgroundColor = 'var(--warning)';
                         progressBar.style.animation = 'none';
@@ -429,7 +431,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             setLoadingState(downloadBtn, false);
             if (error.message !== 'NO_BACKEND') {
-                showStatus(null, true, error.message || translations[currentLang].error_network_download);
+                const target = getApiBaseUrl() || window.location.origin;
+                showStatus(null, true, error.message || `${translations[currentLang].error_network_download} (${target})`);
                 progressStatusText.textContent = translations[currentLang].failed;
                 progressBar.style.backgroundColor = 'var(--warning)';
                 progressBar.style.animation = 'none';

@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import re
 import shutil
@@ -44,6 +45,9 @@ FILE_TTL_SECONDS = int(os.environ.get("FILE_TTL_SECONDS", "900"))
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "3"))
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+LAN_URL_RE = re.compile(
+    r"^http://(?:192\.168|10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}:\d{1,5}$"
+)
 
 # Ensure FFmpeg is available on startup only when missing
 if not has_ffmpeg():
@@ -102,6 +106,17 @@ def serve_bridge():
         except ValueError:
             tunnel_url = ""
 
+    raw_lan = (request.args.get("lan") or "").strip().rstrip("/")
+    lan_url = ""
+    if LAN_URL_RE.match(raw_lan):
+        try:
+            parsed_lan = urllib.parse.urlparse(raw_lan)
+            ip_obj = ipaddress.ip_address(parsed_lan.hostname or "")
+            if parsed_lan.port and 1 <= parsed_lan.port <= 65535 and ip_obj.is_private and not ip_obj.is_loopback:
+                lan_url = raw_lan
+        except ValueError:
+            lan_url = ""
+
     pages_url = "https://chun-chieh-chang.github.io/mp3-to-uncle/"
     mobile_connect_url = (
         f"{pages_url}?api={urllib.parse.quote(tunnel_url, safe='')}"
@@ -112,6 +127,7 @@ def serve_bridge():
         "bridge.html",
         tunnel_url=tunnel_url,
         mobile_connect_url=mobile_connect_url,
+        lan_url=lan_url,
         pages_url=pages_url,
     )
 

@@ -82,19 +82,32 @@
         </header>
 
         <section class="downloader-card">
-            {% if mobile_connect_url %}
+            {% set primary_qr_url = mobile_connect_url or lan_url %}
+            {% if primary_qr_url %}
             <div class="bridge-badge">
                 <span class="material-symbols-outlined">check_circle</span>
-                <span>家用電腦橋接已啟動（Mobile Bridge Active）</span>
+                {% if mobile_connect_url %}
+                <span>家用電腦外網橋接已啟動（Mobile Bridge Active）</span>
+                {% else %}
+                <span>家用同 Wi-Fi 區網橋接已啟動（Local Wi-Fi Mode）</span>
+                {% endif %}
             </div>
+
+            {% if not mobile_connect_url and lan_url %}
+            <div class="inline-warn">
+                <span class="material-symbols-outlined">wifi</span>
+                <span>外部免費通道（Cloudflare / localhost.run）暫時限流，已自動切換為同 Wi-Fi 區網直連。請確認手機與這台電腦連在同一個 Wi-Fi 下再掃碼。</span>
+            </div>
+            {% endif %}
 
             <div class="qr-box">
                 <div id="qrcodeContainer" aria-label="iPhone QR Code"></div>
                 <p id="qrFallbackMsg" class="t-meta hidden">無法載入 QR Code 繪製套件，請直接複製下方連結到手機開啟。</p>
             </div>
 
+            {% if mobile_connect_url %}
             <div class="url-box">
-                <span class="t-label">iPhone / 手機掃碼連線網址（GitHub Pages + 自動綁定本機通道）</span>
+                <span class="t-label">iPhone / 手機掃碼連線網址（外網 / 5G / Wi-Fi 皆可用）</span>
                 <code id="mobileConnectCode" class="url-code">{{ mobile_connect_url }}</code>
                 <button type="button" id="copyMobileBtn" class="btn-primary">
                     <span class="material-symbols-outlined">content_copy</span>
@@ -110,16 +123,32 @@
                     <span>複製通道網址</span>
                 </button>
             </div>
+            {% endif %}
+
+            {% if lan_url %}
+            <div class="url-box">
+                <span class="t-label">家用同 Wi-Fi 區網直連網址（最快、零外部依賴）</span>
+                <code id="lanCode" class="url-code">{{ lan_url }}</code>
+                <button type="button" id="copyLanBtn" class="btn-outline">
+                    <span class="material-symbols-outlined">wifi</span>
+                    <span>複製區網網址</span>
+                </button>
+            </div>
+            {% endif %}
 
             <ol class="steps-list">
                 <li>拿起 <strong>iPhone 相機</strong>直接掃描上方 QR Code，點擊跳出的黃色網址（務必以 <strong>Safari</strong> 開啟）。</li>
+                {% if mobile_connect_url %}
                 <li>手機會自動連上這台電腦並顯示「已從專屬連結自動連線至後端伺服器！」，之後即可直接貼 YouTube / TikTok 下載 MP3 或 MP4。</li>
-                <li>建議在 Safari 點「分享 → 加入主畫面」固定成桌面 App；不用時把電腦上的黑色橋接視窗關掉即立即斷線。</li>
+                {% else %}
+                <li>確認手機與電腦在同一個家用 Wi-Fi，打開後即可直接貼 YouTube / TikTok 下載 MP3 或 MP4。</li>
+                {% endif %}
+                <li>不用時把電腦上的黑色橋接視窗關掉即立即斷線。</li>
             </ol>
             {% else %}
             <div class="status-message status-error">
                 <span class="material-symbols-outlined message-icon">error</span>
-                <span>尚未取得有效的 Cloudflare Tunnel 網址。請雙擊專案目錄下的 <code>start_mobile_bridge.bat</code> 啟動橋接。</span>
+                <span>尚未取得有效的橋接網址。請雙擊專案目錄下的 <code>start_mobile_bridge.bat</code> 啟動橋接。</span>
             </div>
             {% endif %}
 
@@ -130,7 +159,7 @@
         </section>
     </main>
 
-    {% if mobile_connect_url %}
+    {% if primary_qr_url %}
     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
     <script>
         (function () {
@@ -138,14 +167,16 @@
                 (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
             document.documentElement.setAttribute('data-theme', savedTheme);
 
+            const primaryQrUrl = {{ primary_qr_url | tojson }};
             const mobileUrl = {{ mobile_connect_url | tojson }};
             const tunnelUrl = {{ tunnel_url | tojson }};
+            const lanUrl = {{ lan_url | tojson }};
             const container = document.getElementById('qrcodeContainer');
             const fallbackMsg = document.getElementById('qrFallbackMsg');
 
             if (typeof window.qrcode === 'function') {
                 const qr = window.qrcode(0, 'M');
-                qr.addData(mobileUrl);
+                qr.addData(primaryQrUrl);
                 qr.make();
                 container.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
             } else {
@@ -155,6 +186,7 @@
             function bindCopy(btnId, text) {
                 const btn = document.getElementById(btnId);
                 const feedback = document.getElementById('copyFeedback');
+                if (!btn || !text) return;
                 btn.addEventListener('click', async () => {
                     try {
                         await navigator.clipboard.writeText(text);
@@ -167,6 +199,7 @@
 
             bindCopy('copyMobileBtn', mobileUrl);
             bindCopy('copyTunnelBtn', tunnelUrl);
+            bindCopy('copyLanBtn', lanUrl);
         })();
     </script>
     {% endif %}
