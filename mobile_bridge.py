@@ -7,6 +7,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -25,6 +26,11 @@ GIST_FILENAME = "audiostudio_bridge.json"
 GITHUB_GISTS_API = "https://api.github.com/gists"
 GIST_ID_RE = re.compile(r"^[a-f0-9]{20,64}$", re.IGNORECASE)
 CLOUDFLARED_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+HEALTH_CHECK_INTERVAL = max(10, int(os.environ.get("BRIDGE_HEALTH_INTERVAL", "60")))
+HEALTH_CHECK_TIMEOUT = 10
+HEALTH_FAIL_THRESHOLD = 3
+RECONNECT_BACKOFF_BASE = 5
+RECONNECT_BACKOFF_MAX = 60
 TUNNEL_URL_RE = re.compile(
     r"https://[a-z0-9-]+\.(?:trycloudflare\.com|lhr\.life|lhr\.rocks)",
     re.IGNORECASE,
@@ -402,6 +408,175 @@ def sync_fixed_bridge_gist(tunnel_url, status="online", timeout=10):
         return None
 
 
+def _drain_stream(stream):
+    """Continuously drain subprocess stdout/stderr in a daemon thread to avoid pipe deadlock."""
+    if stream is None:
+        return
+    try:
+        for _ in iter(stream.readline, ""):
+            pass
+    except Exception:
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
+def check_endpoint_health(base_url, timeout=HEALTH_CHECK_TIMEOUT):
+    """Verify the external tunnel URL responds HTTP 200 with JSON status=='ok'."""
+    if not base_url:
+        return False
+    url = f"{base_url.rstrip('/')}/api/health"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "AudioStudio-Bridge", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            return isinstance(data, dict) and data.get("status") == "ok"
+    except Exception:
+        return False
+
+
+def has_internet_connectivity(timeout=3):
+    """Check basic outbound internet TCP connectivity via public resolvers."""
+    for host in ("1.1.1.1", "8.8.8.8"):
+        try:
+            with socket.create_connection((host, 443), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _start_flask_server(port):
+    """Start the local Flask server subprocess and wait until `/api/health` responds."""
+    print(f"[Mobile Bridge] 正在啟動本機 AudioStudio 後端 (http://0.0.0.0:{port})...")
+    flask_env = os.environ.copy()
+    flask_env["HOST"] = "0.0.0.0"
+    flask_env["PORT"] = str(port)
+    flask_env["NO_BROWSER"] = "1"
+    flask_proc = subprocess.Popen(
+        [sys.executable, str(BASE_DIR / "app.py")],
+        cwd=str(BASE_DIR),
+        env=flask_env,
+    )
+    if not wait_for_local_server(port):
+        _terminate_proc(flask_proc)
+        raise RuntimeError("本機 Flask 伺服器啟動逾時，請確認連接埠未被佔用或依賴套件已安裝。")
+    return flask_proc
+
+
+def _establish_tunnel(cloudflared_bin, port):
+    """Establish Tier 1 Cloudflare or Tier 2 localhost.run tunnel and drain its stdout."""
+    print("[Mobile Bridge] 正在建立免費 Cloudflare 加密通道...")
+    tunnel_proc, tunnel_url = _start_cloudflared_tunnel(cloudflared_bin, port)
+    if not tunnel_url:
+        tunnel_proc, tunnel_url = _start_localhost_run_tunnel(port)
+
+    if tunnel_proc is not None and tunnel_url:
+        threading.Thread(target=_drain_stream, args=(tunnel_proc.stdout,), daemon=True).start()
+        return tunnel_proc, tunnel_url
+
+    _terminate_proc(tunnel_proc)
+    return None, None
+
+
+def _watchdog_step(state, cloudflared_bin, port, now=None):
+    """Run one non-blocking watchdog cycle on `state`; returns status token string."""
+    if now is None:
+        now = time.time()
+
+    flask_proc = state.get("flask_proc")
+    if flask_proc is None or flask_proc.poll() is not None:
+        logger.warning("本機 Flask 後端已停止，正在嘗試重新啟動...")
+        try:
+            state["flask_proc"] = _start_flask_server(port)
+        except Exception as e:
+            logger.warning("重啟本機 Flask 失敗: %s", e)
+
+    tunnel_proc = state.get("tunnel_proc")
+    tunnel_url = state.get("tunnel_url")
+    proc_dead = tunnel_proc is not None and tunnel_proc.poll() is not None
+    no_tunnel = not tunnel_url
+    health_dead = state.get("consecutive_failures", 0) >= HEALTH_FAIL_THRESHOLD
+
+    if proc_dead or health_dead or no_tunnel:
+        if proc_dead or health_dead:
+            reason = "通道進程已終止" if proc_dead else f"連續 {HEALTH_FAIL_THRESHOLD} 次健康檢查失敗"
+            print(f"[Mobile Bridge Watchdog] {reason}，準備自動重連...")
+            _terminate_proc(tunnel_proc)
+            state["tunnel_proc"] = None
+            state["tunnel_url"] = None
+            state["consecutive_failures"] = 0
+
+        if now < state.get("next_reconnect_at", 0):
+            return "idle"
+
+        if not has_internet_connectivity():
+            if not state.get("waiting_for_net"):
+                print("[Mobile Bridge Watchdog] 網路尚未恢復，等待自動重連...")
+                state["waiting_for_net"] = True
+            backoff = state.get("backoff", RECONNECT_BACKOFF_BASE)
+            state["next_reconnect_at"] = now + backoff
+            state["backoff"] = min(RECONNECT_BACKOFF_MAX, backoff * 2)
+            return "waiting_network"
+
+        state["waiting_for_net"] = False
+        new_proc, new_url = _establish_tunnel(cloudflared_bin, port)
+        if new_url:
+            state["tunnel_proc"] = new_proc
+            state["tunnel_url"] = new_url
+            state["backoff"] = RECONNECT_BACKOFF_BASE
+            state["consecutive_failures"] = 0
+            state["last_health_check"] = now
+            state["next_reconnect_at"] = 0
+            gid = sync_fixed_bridge_gist(new_url, status="online")
+            if gid:
+                state["gist_id"] = gid
+                state["last_synced_url"] = new_url
+                print(f"[Mobile Bridge Watchdog] 通道已自動重連並同步固定網址: {new_url}")
+            else:
+                print(f"[Mobile Bridge Watchdog] 通道已自動重連: {new_url}")
+            return "reconnected"
+
+        backoff = state.get("backoff", RECONNECT_BACKOFF_BASE)
+        state["next_reconnect_at"] = now + backoff
+        state["backoff"] = min(RECONNECT_BACKOFF_MAX, backoff * 2)
+        return "reconnect_failed"
+
+    if now - state.get("last_health_check", 0) >= HEALTH_CHECK_INTERVAL:
+        state["last_health_check"] = now
+        if check_endpoint_health(tunnel_url):
+            state["consecutive_failures"] = 0
+            state["backoff"] = RECONNECT_BACKOFF_BASE
+            if tunnel_url != state.get("last_synced_url"):
+                gid = sync_fixed_bridge_gist(tunnel_url, status="online")
+                if gid:
+                    state["gist_id"] = gid
+                    state["last_synced_url"] = tunnel_url
+            return "healthy"
+
+        failures = state.get("consecutive_failures", 0) + 1
+        state["consecutive_failures"] = failures
+        logger.warning(
+            "通道健康檢查失敗 (%d/%d): %s",
+            failures,
+            HEALTH_FAIL_THRESHOLD,
+            tunnel_url,
+        )
+        if failures >= HEALTH_FAIL_THRESHOLD:
+            return "unhealthy_threshold"
+        return "health_warn"
+
+    return "idle"
+
+
 def main():
     if "--check" in sys.argv[1:]:
         print(f"MOBILE_BRIDGE_CHECK_OK python={sys.executable}")
@@ -410,54 +585,53 @@ def main():
     port = int(os.environ.get("PORT", "5000"))
     cloudflared_bin = ensure_cloudflared()
 
-    flask_proc = None
-    tunnel_proc = None
-    tunnel_url = None
-    gist_id = None
+    state = {
+        "flask_proc": None,
+        "tunnel_proc": None,
+        "tunnel_url": None,
+        "gist_id": None,
+        "last_synced_url": None,
+        "consecutive_failures": 0,
+        "last_health_check": time.time(),
+        "next_reconnect_at": 0,
+        "backoff": RECONNECT_BACKOFF_BASE,
+        "waiting_for_net": False,
+    }
     try:
-        print(f"[Mobile Bridge] 正在啟動本機 AudioStudio 後端 (http://0.0.0.0:{port})...")
-        flask_env = os.environ.copy()
-        flask_env["HOST"] = "0.0.0.0"
-        flask_env["PORT"] = str(port)
-        flask_env["NO_BROWSER"] = "1"
-        flask_proc = subprocess.Popen(
-            [sys.executable, str(BASE_DIR / "app.py")],
-            cwd=str(BASE_DIR),
-            env=flask_env,
-        )
-
-        if not wait_for_local_server(port):
-            raise RuntimeError("本機 Flask 伺服器啟動逾時，請確認連接埠未被佔用或依賴套件已安裝。")
+        state["flask_proc"] = _start_flask_server(port)
 
         lan_ip = get_lan_ip()
         lan_url = f"http://{lan_ip}:{port}" if lan_ip else ""
 
-        print("[Mobile Bridge] 正在建立免費 Cloudflare 加密通道...")
-        tunnel_proc, tunnel_url = _start_cloudflared_tunnel(cloudflared_bin, port)
-
-        if not tunnel_url:
-            tunnel_proc, tunnel_url = _start_localhost_run_tunnel(port)
+        tunnel_proc, tunnel_url = _establish_tunnel(cloudflared_bin, port)
+        state["tunnel_proc"] = tunnel_proc
+        state["tunnel_url"] = tunnel_url
 
         if not tunnel_url and not lan_url:
             raise RuntimeError("無法建立外部 HTTPS 通道，且未偵測到區域網路 IP。")
 
         if tunnel_url:
             gist_id = sync_fixed_bridge_gist(tunnel_url, status="online")
+            if gist_id:
+                state["gist_id"] = gist_id
+                state["last_synced_url"] = tunnel_url
+        else:
+            state["next_reconnect_at"] = time.time() + RECONNECT_BACKOFF_BASE
 
         query = {}
         if tunnel_url:
             query["tunnel"] = tunnel_url
         if lan_url:
             query["lan"] = lan_url
-        if gist_id:
-            query["gist"] = gist_id
+        if state["gist_id"]:
+            query["gist"] = state["gist_id"]
         bridge_page_url = f"http://127.0.0.1:{port}/bridge?{urllib.parse.urlencode(query)}"
 
         print("\n" + "=" * 68)
         print("  AudioStudio 手機橋接已啟動！(iPhone / Android / Mac 皆可用)")
         print("=" * 68)
-        if gist_id and tunnel_url:
-            fixed_bridge_url = f"{PAGES_URL}?bridge={gist_id}"
+        if state["gist_id"] and tunnel_url:
+            fixed_bridge_url = f"{PAGES_URL}?bridge={state['gist_id']}"
             print(f"  [永久固定網址] 手機掃過一次永久不用重掃:\n  {fixed_bridge_url}\n")
             print(f"  本次通道位址 (已自動同步至上述固定網址):\n  {tunnel_url}")
         elif tunnel_url:
@@ -469,6 +643,7 @@ def main():
             print("  [提示] 外部免費通道暫時壅塞，已自動切換為「同 Wi-Fi 區網直連模式」！")
         if lan_url:
             print(f"  家用同 Wi-Fi 區網網址:\n  {lan_url}")
+        print(f"  [看門狗] 已啟用斷線自動重連（每 {HEALTH_CHECK_INTERVAL} 秒檢查，斷線後自動重建通道並更新固定網址）")
         print("=" * 68)
         print("  即將自動開啟 QR Code 視窗供 iPhone 相機掃描...")
         print("  使用期間請勿關閉此視窗；按 Ctrl+C 或直接關閉視窗即可停止服務。")
@@ -476,21 +651,16 @@ def main():
 
         webbrowser.open_new(bridge_page_url)
 
-        if tunnel_proc is not None:
-            while tunnel_proc.poll() is None and flask_proc.poll() is None:
-                line = tunnel_proc.stdout.readline()
-                if not line:
-                    time.sleep(0.2)
-        else:
-            while flask_proc.poll() is None:
-                time.sleep(0.5)
+        while True:
+            _watchdog_step(state, cloudflared_bin, port)
+            time.sleep(1)
     except KeyboardInterrupt:
         print("\n[Mobile Bridge] 正在關閉橋接服務...")
     finally:
-        if gist_id and tunnel_url:
-            sync_fixed_bridge_gist(tunnel_url, status="offline", timeout=3)
-        _terminate_proc(tunnel_proc)
-        _terminate_proc(flask_proc)
+        if state.get("gist_id") and state.get("tunnel_url"):
+            sync_fixed_bridge_gist(state["tunnel_url"], status="offline", timeout=3)
+        _terminate_proc(state.get("tunnel_proc"))
+        _terminate_proc(state.get("flask_proc"))
         print("[Mobile Bridge] 已安全關閉。")
 
 

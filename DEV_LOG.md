@@ -364,3 +364,14 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 1. **`mobile_bridge.py`, `.gitignore`**: Added `sync_fixed_bridge_gist()` using a Secret GitHub Gist (`audiostudio_bridge.json`, resolved via `GITHUB_GIST_TOKEN`, `.bridge_config.json`, or `gh auth token`). On startup it creates or `PATCH`es the same Gist with the active tunnel URL (`status: "online"`), and marks `status: "offline"` on clean shutdown; ignored `.bridge_config.json` in `.gitignore`.
 2. **`app.py`, `templates/bridge.html`**: Validated `gist` query param against `GIST_ID_RE` and prioritized the permanent URL (`?bridge=<gist_id>`) for QR rendering.
 3. **`static/js/script.js`, `static/sw.js`**: Added `getSavedBridgeGistId()` (retaining `?bridge=` in the URL so iOS "Add to Home Screen" PWAs preserve the fixed pointer across isolated Safari/PWA storage), `resolveBridgeFromGist()`, automatic self-healing reconnection inside `apiFetch()` (with 10s cooldown and polling opt-out), offline detection, and bumped Service Worker cache to `audiostudio-v3`.
+
+## [2026-11-27] Auto-Reconnect Watchdog for Host Outages & Zombie Tunnels
+
+### Problem
+- Previously `mobile_bridge.py` blocked on `tunnel_proc.stdout.readline()` and exited as soon as the tunnel process died during prolonged internet outages or PPPoE IP changes, leaving the host server offline without recovery until manual restart.
+
+### Corrective and Preventive Actions (CAPA)
+1. **`mobile_bridge.py`**: Added daemon stdout draining (`_drain_stream`), external tunnel probe (`check_endpoint_health` checking `/api/health`), internet pre-check (`has_internet_connectivity`), and `_watchdog_step()` in `main()`:
+   - Monitors both Flask and tunnel processes in a 1s non-blocking loop; automatically restarts Flask if crashed and rebuilds the tunnel immediately when `tunnel_proc` exits.
+   - Runs a periodic `/api/health` probe (`HEALTH_CHECK_INTERVAL = 60s`); 3 consecutive failures trigger zombie tunnel termination and automatic rebuild.
+   - Uses exponential backoff (`5s` up to `60s`) while offline, re-syncs the recovered tunnel URL to the same Secret GitHub Gist once online, and never re-opens duplicate browser tabs.
