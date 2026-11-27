@@ -86,7 +86,8 @@ document.addEventListener('DOMContentLoaded', () => {
             conn_no_ffmpeg: 'Backend reachable, but FFmpeg is missing.',
             conn_fail: 'Connection failed. Check URL and CORS/HTTPS.',
             settings_saved: 'Server settings saved.',
-            settings_reset: 'Server settings cleared.'
+            settings_reset: 'Server settings cleared.',
+            api_autoconnect: 'Connected to custom backend from link!'
         },
         zh: {
             placeholder: '在此貼上影片連結...',
@@ -109,7 +110,8 @@ document.addEventListener('DOMContentLoaded', () => {
             conn_no_ffmpeg: '後端可連線，但缺少 FFmpeg。',
             conn_fail: '連線失敗，請確認網址正確且支援 HTTPS。',
             settings_saved: '已儲存伺服器設定。',
-            settings_reset: '已清除自訂伺服器設定。'
+            settings_reset: '已清除自訂伺服器設定。',
+            api_autoconnect: '已從專屬連結自動連線至後端伺服器！'
         }
     };
 
@@ -511,11 +513,36 @@ document.addEventListener('DOMContentLoaded', () => {
         pwaInstallBtn.classList.add('hidden');
     });
 
+    function applyApiParamFromUrl() {
+        const currentPageUrl = new URL(window.location.href);
+        const apiParam = currentPageUrl.searchParams.get('api');
+        if (!apiParam) return false;
+
+        try {
+            const parsed = new URL(apiParam.trim());
+            const isLocalHttp = parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+            if (parsed.protocol === 'https:' || isLocalHttp) {
+                const cleaned = normalizeApiUrl(parsed.origin + parsed.pathname);
+                localStorage.setItem(STORAGE_API_KEY, cleaned);
+                currentPageUrl.searchParams.delete('api');
+                window.history.replaceState({}, '', currentPageUrl.pathname + currentPageUrl.search + currentPageUrl.hash);
+                return true;
+            }
+        } catch {
+            // Ignore malformed ?api= param
+        }
+        return false;
+    }
+
     // Initialize UI
+    const didAutoConnect = applyApiParamFromUrl();
     updateLanguage();
     syncQualityVisibility();
     syncClearButton();
     refreshBackendNotice();
+    if (didAutoConnect) {
+        showStatus('api_autoconnect', false);
+    }
 });
 
 // Register Service Worker for PWA

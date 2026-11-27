@@ -58,12 +58,18 @@
 
 ## 手機端（iPhone / macOS / Android）使用說明
 
-- **iPhone (iOS Safari)**：
+- **iPhone / 手機抓 YouTube 一鍵家用橋接（推薦，免 Cookies、永不 403）**：
+  1. 免費公有雲（Render）機房 IP 容易被 YouTube API 封鎖為 HTTP 403/429，此時可改用自家 Windows 電腦當私人後端。
+  2. 直接雙擊專案根目錄的 **`start_mobile_bridge.bat`**（首次會自動下載官方 `cloudflared` 並啟動本機伺服器）。
+  3. 電腦螢幕會自動打開 QR Code 頁面；拿起 **iPhone 相機**掃描並用 **Safari** 開啟，即可透過你家住宅 IP 直接分析並下載 YouTube（不用手動輸入網址）。
+  4. 用畢後只要關閉電腦上的黑色橋接視窗即立即中斷連線。
+- **iPhone (iOS Safari) 儲存與安裝提醒**：
   1. 請用 **Safari** 開啟網站（勿停留在 LINE / FB / IG 內建瀏覽器）。
   2. 轉檔完成後，點擊綠色 **「點擊儲存檔案」** 按鈕並選擇「下載」，檔案會存於「**檔案 App → 下載項目**」。
   3. 點擊 Safari 下方「分享 → 加入主畫面」即可安裝為桌面 App。
 - **macOS / Android**：
   - 使用 Safari 或 Chrome 開啟並加入主畫面即可；Android Chrome 亦會顯示「立即安裝到主畫面」按鈕。
+  - 若僅需 24 小時在手機下載 **TikTok**（無需電腦開機），可將 GitHub Repository Variable `API_BASE_URL` 設為 `https://mp3-to-uncle-us.onrender.com`。
 
 ---
 

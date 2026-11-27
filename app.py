@@ -4,6 +4,7 @@ import shutil
 import sys
 import threading
 import time
+import urllib.parse
 import uuid
 import webbrowser
 from pathlib import Path
@@ -89,6 +90,30 @@ if AUTO_CLEANUP:
 @app.route("/")
 def serve_index():
     return render_template("index.html")
+
+
+@app.route("/bridge")
+def serve_bridge():
+    raw_tunnel = (request.args.get("tunnel") or "").strip().rstrip("/")
+    tunnel_url = ""
+    if raw_tunnel.startswith("https://"):
+        try:
+            tunnel_url = validate_url(raw_tunnel)
+        except ValueError:
+            tunnel_url = ""
+
+    pages_url = "https://chun-chieh-chang.github.io/mp3-to-uncle/"
+    mobile_connect_url = (
+        f"{pages_url}?api={urllib.parse.quote(tunnel_url, safe='')}"
+        if tunnel_url
+        else ""
+    )
+    return render_template(
+        "bridge.html",
+        tunnel_url=tunnel_url,
+        mobile_connect_url=mobile_connect_url,
+        pages_url=pages_url,
+    )
 
 
 @app.route("/sw.js")

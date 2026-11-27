@@ -286,3 +286,15 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 1. Added `_YdlCaptureLogger` in `downloader.py` (sanitizing temp/cookie paths) and attached it to `get_video_info` and `download_media` so real `yt-dlp` warnings appear in both Render logs and API error responses.
 2. Hardened `_resolve_cookies_status()` to strip whitespace/UTF-8 BOM, validate Netscape tab-separated cookie lines, and report safe status via `get_diagnostics()` in `/api/health` (plus `YTDLP_PROXY` support).
 3. Preserved `94aa0a8`'s native `yt-dlp` client default and multi-JS runtime detection (`deno`, `node`, `bun`, `quickjs`).
+
+## [2026-11-27] Option B: One-Click Cloudflare Mobile Bridge & QR Auto-Connect
+
+### Problem
+- Verified across both Render Singapore and Render Oregon (`mp3-to-uncle-us`) even with fresh `/robots.txt` cookies: YouTube consistently rejects `youtubei/v1/player` from Render datacenter IPs with `HTTP Error 403: Forbidden`, while local residential IP succeeds 100%.
+- iPhone users cannot sideload a permanent free standalone `yt-dlp` app due to iOS sandbox & App Store 5.2.3 rules.
+
+### Corrective and Preventive Actions (CAPA)
+1. **Frontend `?api=` Auto-Connect (`static/js/script.js`)**: Added `applyApiParamFromUrl()` validating `https:` (or `http://localhost`/`127.0.0.1`) query params, persisting into `localStorage`, and cleaning the URL bar via `history.replaceState`.
+2. **Bridge QR UI (`app.py`, `templates/bridge.html`)**: Added `/bridge` route validating `https://` tunnel URLs via `validate_url()` and rendering a local client-side QR Code + one-click copy links + iPhone Safari instructions.
+3. **One-Click Launcher (`mobile_bridge.py`, `start_mobile_bridge.bat`)**: Automated Python detection, auto-download of official `cloudflared-windows-amd64.exe` into `bin/`, local Flask startup, quick Cloudflare Tunnel creation, and automatic browser QR launch.
+4. **Docs (`DEPLOY.md`, `handoff.md`)**: Documented mobile bridge usage and Render `mp3-to-uncle-us` 24/7 TikTok configuration.
