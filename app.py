@@ -21,6 +21,7 @@ from downloader import (
     VALID_QUALITIES,
     download_media,
     ensure_ffmpeg,
+    extract_media_url,
     get_diagnostics,
     get_js_runtimes,
     get_video_info,
@@ -167,7 +168,7 @@ def api_get_info():
     data = request.get_json(silent=True) or {}
     url = data.get("url")
     try:
-        validated_url = validate_url(url)
+        validated_url = validate_url(extract_media_url(url))
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
 
@@ -184,7 +185,7 @@ def api_download():
     mode = data.get("mode", "mp3")
 
     try:
-        validated_url = validate_url(url)
+        validated_url = validate_url(extract_media_url(url))
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
 

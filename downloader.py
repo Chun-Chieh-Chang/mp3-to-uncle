@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -38,6 +39,10 @@ YTDLP_COOKIES_B64 = os.environ.get("YTDLP_COOKIES_B64", "").strip()
 VALID_MODES = ("mp3", "mp4")
 VALID_QUALITIES = ("128", "192", "256", "320")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+SHARE_URL_RE = re.compile(r"https?://[^\s<>\"'\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]+", re.IGNORECASE)
+XHS_SHORT_HOSTS = frozenset({"xhslink.cn", "www.xhslink.cn", "xhslink.com", "www.xhslink.com"})
+XHS_WEB_HOSTS = frozenset({"xiaohongshu.com", "www.xiaohongshu.com", "rednote.com", "www.rednote.com"})
+XHS_NOTE_PATH_RE = re.compile(r"^/(?P<path>(?:explore|discovery/item)/[\da-fA-F]+)(?:/|$)")
 
 
 JS_RUNTIME_BINARIES = (
@@ -141,6 +146,17 @@ def download_ffmpeg():
                 zip_path.unlink()
 
 
+def extract_media_url(raw):
+    """Extract the first HTTP/HTTPS URL from pasted share text, preserving query tokens."""
+    if not isinstance(raw, str):
+        return raw
+    cleaned = raw.strip()
+    match = SHARE_URL_RE.search(cleaned)
+    if match:
+        return match.group(0).rstrip(".,;!?")
+    return cleaned
+
+
 def validate_url(url):
     """Validate an external HTTP/HTTPS media URL and block local/private SSRF targets."""
     if not isinstance(url, str):
@@ -150,6 +166,8 @@ def validate_url(url):
         raise ValueError("URL is required.")
     if len(cleaned) > 2048:
         raise ValueError("URL exceeds maximum allowed length (2048 characters).")
+    if any(ch.isspace() for ch in cleaned):
+        raise ValueError("URL must not contain whitespace.")
 
     parsed = urllib.parse.urlparse(cleaned)
     if parsed.scheme.lower() not in ("http", "https"):
@@ -187,14 +205,108 @@ def validate_url(url):
     return cleaned
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _canonicalize_xiaohongshu_url(url):
+    """Normalize Xiaohongshu / Rednote web or login-redirect URLs to canonical xiaohongshu.com form."""
+    parsed = urllib.parse.urlparse(url)
+    hostname = (parsed.hostname or "").strip().lower()
+    if hostname not in XHS_WEB_HOSTS:
+        return None
+
+    if parsed.path.rstrip("/") == "/login":
+        query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        raw_redirect = (query_params.get("redirectPath") or [""])[0].strip()
+        if not raw_redirect:
+            return None
+        redirect_url = urllib.parse.unquote(raw_redirect)
+        redirect_parsed = urllib.parse.urlparse(redirect_url)
+        redirect_host = (redirect_parsed.hostname or "").strip().lower()
+        if redirect_parsed.scheme.lower() not in ("http", "https") or redirect_host not in XHS_WEB_HOSTS:
+            return None
+        parsed = redirect_parsed
+
+    match = XHS_NOTE_PATH_RE.match(parsed.path)
+    if not match:
+        return None
+
+    note_path = match.group("path")
+    raw_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+    kept = [
+        (key, raw_params[key][0])
+        for key in ("xsec_token", "xsec_source")
+        if key in raw_params and raw_params[key]
+    ]
+    query_str = urllib.parse.urlencode(kept, safe="=") if kept else ""
+    base = f"https://www.xiaohongshu.com/{note_path}"
+    return f"{base}?{query_str}" if query_str else base
+
+
+def _resolve_xiaohongshu_url(url, max_hops=5, timeout=10):
+    """Resolve xhslink short URLs and rednote login redirects safely with SSRF checks per hop."""
+    canonical = _canonicalize_xiaohongshu_url(url)
+    if canonical:
+        return canonical
+
+    hostname = (urllib.parse.urlparse(url).hostname or "").strip().lower()
+    if hostname not in XHS_SHORT_HOSTS:
+        return url
+
+    handlers = [_NoRedirectHandler()]
+    proxy = os.environ.get("YTDLP_PROXY", "").strip()
+    if proxy:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    opener = urllib.request.build_opener(*handlers)
+
+    current = url
+    try:
+        for _ in range(max_hops):
+            validate_url(current)
+            req = urllib.request.Request(
+                current,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                },
+            )
+            location = None
+            try:
+                with opener.open(req, timeout=timeout) as resp:
+                    location = resp.headers.get("Location") if resp.headers else None
+            except urllib.error.HTTPError as err:
+                if 300 <= err.code < 400:
+                    location = err.headers.get("Location") if err.headers else None
+                err.close()
+
+            if not location:
+                return _canonicalize_xiaohongshu_url(current) or url
+
+            next_url = urllib.parse.urljoin(current, location.strip())
+            validate_url(next_url)
+            canonical_next = _canonicalize_xiaohongshu_url(next_url)
+            if canonical_next:
+                return canonical_next
+            current = next_url
+    except Exception as e:
+        logger.warning("Xiaohongshu short-link resolution fell back: %s", type(e).__name__)
+        return url
+
+    return url
+
+
 def _clean_url(url):
-    """Strip playlist/index params so yt-dlp only fetches a single video."""
+    """Strip YouTube playlist params and canonicalize Xiaohongshu short/login-redirect URLs."""
     parsed = urllib.parse.urlparse(url)
     params = urllib.parse.parse_qs(parsed.query)
     if "youtube.com" in parsed.netloc and "v" in params:
         clean_query = urllib.parse.urlencode({"v": params["v"][0]})
         return urllib.parse.urlunparse(parsed._replace(query=clean_query))
-    return url
+    return _resolve_xiaohongshu_url(url)
 
 
 def _get_ffmpeg_location():
@@ -340,7 +452,7 @@ def _build_ydl_opts(extra_opts=None, ydl_logger=None):
 
 def get_video_info(url):
     """Get metadata for a video link (YouTube, TikTok, etc. via yt-dlp)."""
-    url = _clean_url(validate_url(url))
+    url = _clean_url(validate_url(extract_media_url(url)))
     ydl_logger = _YdlCaptureLogger()
     ydl_opts = _build_ydl_opts({
         "skip_download": True,
@@ -378,7 +490,7 @@ def get_video_info(url):
 
 def download_media(url, mode="mp3", quality="192", progress_hook=None, output_dir=None):
     """Download as 'mp3' or 'mp4' via yt-dlp."""
-    url = _clean_url(validate_url(url))
+    url = _clean_url(validate_url(extract_media_url(url)))
     if mode not in VALID_MODES:
         raise ValueError(f"Invalid mode '{mode}'. Must be one of {VALID_MODES}.")
     quality_str = str(quality)

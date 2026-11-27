@@ -375,3 +375,25 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 ### Verification (PDCA Check)
 - `yaml.safe_load` parsed `.github/workflows/deploy.yml` cleanly (`YAML_PARSED_OK`) with all required permissions/steps and no `peaceiris/actions-gh-pages` references.
 - Local simulation of `Prepare Static Files` (`index.html` Jinja substitution, `sw.js`, `favicon.ico`, `.nojekyll`, `config.js` JSON parse, and `node --check`) passed (`PAGES_BUILD_SIMULATION_OK`).
+
+## [2026-11-27] Share-Text URL Extraction, Xiaohongshu Canonicalization & Automatic Cloud Fallback
+
+### Requirement
+- Allow users to paste raw Xiaohongshu share text (`https://xhslink.cn/... 複製後開啟小紅書查看筆記`) directly and download Xiaohongshu videos cleanly, even when their browser is bound to a Taiwan home bridge whose DNS intercepts `xiaohongshu.com` with a self-signed certificate.
+
+### Root Cause Analysis (RCA)
+1. **Share-Text Pollution**: Pasting App share text included trailing Chinese copy around the URL, causing `yt-dlp` and `validate_url` to process non-URL text.
+2. **Overseas `rednote.com/login` Redirect**: `xhslink.cn` short links redirect overseas cloud IPs (e.g., Render US) to `www.rednote.com/login?redirectPath=...`, which `yt-dlp`'s `XiaoHongShuIE` rejects as `Unsupported URL`, even though the canonical `www.xiaohongshu.com/discovery/item/<id>?xsec_token=...` URL succeeds with HTTP 200.
+3. **Local DNS Interception**: Normal browsers bound via `localStorage` to the Taiwan home bridge hit local DNS interception (`self-signed certificate`) for `xiaohongshu.com` / `xhslink.cn`.
+
+### Corrective and Preventive Actions (CAPA)
+1. **`downloader.py`, `app.py`**:
+   - Added `extract_media_url()` to extract the first clean HTTP/HTTPS URL from share text while keeping `validate_url()` strict (and rejecting whitespace anywhere in the URL).
+   - Added `_canonicalize_xiaohongshu_url()` and `_resolve_xiaohongshu_url()` inside `_clean_url()` with manual redirect inspection and per-hop `validate_url()` SSRF checks, converting `xhslink.cn`/`xhslink.com` and `rednote.com/login?redirectPath=...` to canonical `www.xiaohongshu.com` URLs preserving `xsec_token`/`xsec_source`.
+2. **`static/js/script.js`, `static/sw.js`**:
+   - Added `extractFirstUrl()` on Paste and Analyze, plus per-video automatic cloud fallback (`apiBaseOverride: cfg.apiBaseUrl`) when a Xiaohongshu URL hits `CERTIFICATE_VERIFY_FAILED` / `self-signed certificate` on a bridge/custom backend without altering `localStorage` or YouTube routing.
+   - Bumped `CACHE_NAME` in `static/sw.js` to `audiostudio-v5`.
+
+### Verification (PDCA Check)
+- `py_compile` (`app.py`, `downloader.py`, `mobile_bridge.py`) and `node --check` (`config.js`, `script.js`, `sw.js`): passed.
+- Unit, security/SSRF redirect, and Flask `test_client()` checks (`ALL_XHS_BACKEND_CHECKS_PASSED`) + JS helper checks (`ALL_XHS_FRONTEND_CHECKS_PASSED`): all passed.

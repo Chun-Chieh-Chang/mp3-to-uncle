@@ -65,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const settingsStatusText = document.getElementById('settingsStatusText');
 
     let currentUrl = '';
+    let currentApiBaseOverride = null;
     let currentLang = 'zh';
     let activePollTimer = null;
     let deferredInstallPrompt = null;
@@ -279,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (navigator.clipboard && navigator.clipboard.readText) {
                 const text = await navigator.clipboard.readText();
                 if (text) {
-                    urlInput.value = text.trim();
+                    urlInput.value = extractFirstUrl(text);
                     syncClearButton();
                     urlInput.focus();
                     return;
@@ -399,9 +400,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    const XHS_HOST_RE = /(?:^|\.)(?:xiaohongshu\.com|xhslink\.cn|xhslink\.com|rednote\.com)$/i;
+
+    function extractFirstUrl(raw) {
+        const text = (raw || '').trim();
+        const match = text.match(/https?:\/\/[^\s<>"'\u3000-\u303F\u4E00-\u9FFF\uFF00-\uFFEF]+/i);
+        return match ? match[0].replace(/[.,;!?]+$/, '') : text;
+    }
+
+    function isXiaohongshuUrl(raw) {
+        try {
+            const parsed = new URL((raw || '').trim());
+            return XHS_HOST_RE.test(parsed.hostname);
+        } catch {
+            return false;
+        }
+    }
+
+    function isSslDnsInterceptError(msg) {
+        return Boolean(msg && /CERTIFICATE_VERIFY_FAILED|self-signed certificate/i.test(msg));
+    }
+
     async function apiFetch(endpoint, options = {}) {
-        const { allowBridgeRefresh = true, ...fetchOptions } = options;
-        let apiBase = getApiBaseUrl();
+        const { allowBridgeRefresh = true, apiBaseOverride = null, ...fetchOptions } = options;
+        let apiBase = apiBaseOverride !== null ? apiBaseOverride : getApiBaseUrl();
         const gistId = getSavedBridgeGistId();
 
         if (apiBase === null && allowBridgeRefresh && gistId) {
@@ -423,7 +445,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             return await fetch(apiBase + endpoint, fetchOptions);
         } catch (err) {
-            if (allowBridgeRefresh && gistId && (Date.now() - lastBridgeRefreshAt > BRIDGE_REFRESH_COOLDOWN_MS)) {
+            if (apiBaseOverride === null && allowBridgeRefresh && gistId && (Date.now() - lastBridgeRefreshAt > BRIDGE_REFRESH_COOLDOWN_MS)) {
                 lastBridgeRefreshAt = Date.now();
                 const res = await resolveBridgeFromGist(gistId, { silent: true });
                 if (res.ok && res.apiUrl && res.apiUrl !== apiBase) {
@@ -444,12 +466,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     fetchBtn.addEventListener('click', async () => {
-        const url = urlInput.value.trim();
+        const url = extractFirstUrl(urlInput.value);
+        if (url !== urlInput.value) {
+            urlInput.value = url;
+            syncClearButton();
+        }
         if (!url) {
             showStatus('error_no_url', true);
             return;
         }
 
+        currentApiBaseOverride = null;
         stopPolling();
         hideStatus();
         setLoadingState(fetchBtn, true, 'analyzing');
@@ -465,7 +492,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ url })
             });
 
-            const data = await response.json();
+            let data = await response.json();
+
+            if (!data.success && isXiaohongshuUrl(url) && isSslDnsInterceptError(data.error)) {
+                const cloudFallback = normalizeApiUrl(cfg.apiBaseUrl);
+                const activeBase = getApiBaseUrl();
+                if (cloudFallback && cloudFallback !== activeBase) {
+                    try {
+                        const retryResp = await apiFetch('/api/info', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url }),
+                            apiBaseOverride: cloudFallback
+                        });
+                        const retryData = await retryResp.json();
+                        if (retryData && retryData.success) {
+                            currentApiBaseOverride = cloudFallback;
+                            data = retryData;
+                        }
+                    } catch {
+                        // Preserve original error if cloud fallback is unreachable
+                    }
+                }
+            }
 
             if (data.success) {
                 currentUrl = url;
@@ -511,7 +560,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await apiFetch('/api/download', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: currentUrl, quality, mode })
+                body: JSON.stringify({ url: currentUrl, quality, mode }),
+                apiBaseOverride: currentApiBaseOverride
             });
 
             const startData = await response.json();
@@ -524,7 +574,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             activePollTimer = setInterval(async () => {
                 try {
-                    const progResp = await apiFetch(`/api/progress/${jobId}`, { allowBridgeRefresh: false });
+                    const progResp = await apiFetch(`/api/progress/${jobId}`, {
+                        allowBridgeRefresh: false,
+                        apiBaseOverride: currentApiBaseOverride
+                    });
                     const prog = await progResp.json();
                     transientErrors = 0;
 
@@ -556,7 +609,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         progressPercentage.textContent = '100%';
                         progressStatusText.textContent = translations[currentLang].finished;
 
-                        const apiBase = getApiBaseUrl() || '';
+                        const apiBase = currentApiBaseOverride || getApiBaseUrl() || '';
                         const fileUrl = apiBase + prog.download_url;
                         const filename = prog.filename || (mode === 'mp4' ? 'download.mp4' : 'download.mp3');
                         const isMp4 = filename.toLowerCase().endsWith('.mp4') || mode === 'mp4';
@@ -609,7 +662,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (transientErrors >= MAX_POLL_ERRORS) {
                         stopPolling();
                         setLoadingState(downloadBtn, false);
-                        const target = getApiBaseUrl() || window.location.origin;
+                        const target = currentApiBaseOverride || getApiBaseUrl() || window.location.origin;
                         showStatus(null, true, `${translations[currentLang].error_network_download} (${target})`);
                         progressStatusText.textContent = translations[currentLang].failed;
                         progressBar.style.backgroundColor = 'var(--warning)';
@@ -620,7 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             setLoadingState(downloadBtn, false);
             if (error.message !== 'NO_BACKEND') {
-                const target = getApiBaseUrl() || window.location.origin;
+                const target = currentApiBaseOverride || getApiBaseUrl() || window.location.origin;
                 showStatus(null, true, error.message || `${translations[currentLang].error_network_download} (${target})`);
                 progressStatusText.textContent = translations[currentLang].failed;
                 progressBar.style.backgroundColor = 'var(--warning)';

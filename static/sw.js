@@ -1,4 +1,4 @@
-const CACHE_NAME = 'audiostudio-v4';
+const CACHE_NAME = 'audiostudio-v5';
 const ASSETS = [
   './',
   'static/css/style.css',
