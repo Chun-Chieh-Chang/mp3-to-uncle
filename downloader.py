@@ -1,6 +1,7 @@
 import base64
 import ipaddress
 import logging
+import math
 import os
 import re
 import shutil
@@ -450,6 +451,57 @@ def _build_ydl_opts(extra_opts=None, ydl_logger=None):
     return opts
 
 
+def _format_duration(seconds):
+    """Format positive duration seconds as H:MM:SS or M:SS, or return None."""
+    if seconds is None or isinstance(seconds, bool):
+        return None
+    try:
+        val = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(val) or val <= 0:
+        return None
+    total = int(round(val))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _extract_duration(info_dict):
+    """Extract (duration_seconds, formatted_duration) from top-level or format entries."""
+    if not isinstance(info_dict, dict):
+        return None, None
+
+    candidates = [info_dict.get("duration")]
+    for key in ("requested_formats", "formats"):
+        entries = info_dict.get(key)
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, dict):
+                    candidates.append(entry.get("duration"))
+
+    duration_seconds = None
+    for cand in candidates:
+        if cand is None or isinstance(cand, bool):
+            continue
+        try:
+            val = float(cand)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(val) and val > 0:
+            duration_seconds = val
+            break
+
+    formatted = _format_duration(duration_seconds)
+    if not formatted:
+        raw_str = info_dict.get("duration_string")
+        if isinstance(raw_str, str) and raw_str.strip() and raw_str.strip().lower() != "unknown":
+            formatted = raw_str.strip()
+    return duration_seconds, formatted
+
+
 def get_video_info(url):
     """Get metadata for a video link (YouTube, TikTok, etc. via yt-dlp)."""
     url = _clean_url(validate_url(extract_media_url(url)))
@@ -467,8 +519,7 @@ def get_video_info(url):
 
             title = info_dict.get("title", "Unknown Title")
             thumbnail = info_dict.get("thumbnail", "")
-            duration = info_dict.get("duration_string", "Unknown")
-            duration_seconds = info_dict.get("duration")
+            duration_seconds, duration = _extract_duration(info_dict)
             exceeds_limit = bool(
                 MAX_DURATION_SECONDS and duration_seconds and duration_seconds > MAX_DURATION_SECONDS
             )
@@ -477,7 +528,7 @@ def get_video_info(url):
                 "success": True,
                 "title": title,
                 "thumbnail": thumbnail,
-                "duration": duration,
+                "duration": duration or "--:--",
                 "duration_seconds": duration_seconds,
                 "exceeds_limit": exceeds_limit,
                 "max_duration_seconds": MAX_DURATION_SECONDS,
@@ -488,7 +539,7 @@ def get_video_info(url):
         return {"success": False, "error": _format_ydl_error(e, ydl_logger)}
 
 
-def download_media(url, mode="mp3", quality="192", progress_hook=None, output_dir=None):
+def download_media(url, mode="mp3", quality="192", progress_hook=None, output_dir=None, postprocessor_hook=None):
     """Download as 'mp3' or 'mp4' via yt-dlp."""
     url = _clean_url(validate_url(extract_media_url(url)))
     if mode not in VALID_MODES:
@@ -510,7 +561,7 @@ def download_media(url, mode="mp3", quality="192", progress_hook=None, output_di
 
     if MAX_DURATION_SECONDS > 0:
         def _duration_filter(info_dict, *, incomplete=False):
-            duration = info_dict.get("duration")
+            duration, _ = _extract_duration(info_dict)
             if duration and duration > MAX_DURATION_SECONDS:
                 return (
                     f"Video duration ({int(duration)}s) exceeds cloud limit ({MAX_DURATION_SECONDS}s). "
@@ -539,6 +590,8 @@ def download_media(url, mode="mp3", quality="192", progress_hook=None, output_di
 
     if progress_hook:
         ydl_opts["progress_hooks"] = [progress_hook]
+    if postprocessor_hook:
+        ydl_opts["postprocessor_hooks"] = [postprocessor_hook]
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

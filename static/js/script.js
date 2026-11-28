@@ -4,8 +4,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const STORAGE_THEME_KEY = 'audiostudio_theme';
     const GIST_ID_RE = /^[a-f0-9]{20,64}$/i;
     const BRIDGE_REFRESH_COOLDOWN_MS = 10000;
-    const POLL_INTERVAL_MS = 1000;
-    const MAX_POLL_ERRORS = 3;
+    const POLL_INTERVAL_MS = 1500;
+    const MAX_POLL_ERRORS = 8;
 
     const urlInput = document.getElementById('urlInput');
     const pasteBtn = document.getElementById('pasteBtn');
@@ -73,6 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastReadyFileUrl = '';
     let lastReadyFilename = '';
     let lastReadyMimeType = '';
+    let lastReadyFile = null;
     let lastBridgeRefreshAt = 0;
 
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -86,8 +87,12 @@ document.addEventListener('DOMContentLoaded', () => {
             loading: 'Loading...',
             analyzing: 'Analyzing...',
             queued: 'Queued for processing...',
+            starting_download: 'Connecting to media server...',
             downloading: 'Downloading & Converting...',
             processing: 'Finalizing audio/video...',
+            converting: 'Converting / Packaging (FFmpeg)...',
+            poll_retrying: 'Network hiccup, retrying',
+            cloud_fallback_retry: 'Local DNS blocked Xiaohongshu; switching to cloud server (may take ~30s to wake)...',
             error_no_url: 'Please enter a valid URL',
             error_no_backend: 'Cloud backend URL is not configured. Open Server Settings or use the Windows Portable App.',
             error_fetch_info: 'Failed to fetch video information',
@@ -104,6 +109,11 @@ document.addEventListener('DOMContentLoaded', () => {
             settings_saved: 'Server settings saved.',
             settings_reset: 'Server settings cleared.',
             api_autoconnect: 'Connected to custom backend from link!',
+            share_btn_default: 'Share / Save to Files or Photos',
+            share_preparing: 'Preparing file',
+            share_tap_again: 'File Ready — Tap Again to Share',
+            share_ready_hint: 'File downloaded to browser memory. Tap "File Ready — Tap Again to Share" now to open the iOS Share Sheet.',
+            share_fetch_fail: 'Failed to fetch file for sharing. Please tap "Tap to Save File" above.',
             share_unsupported: 'Your browser does not support direct file sharing. Please use "Tap to Save File" above.',
             bridge_connecting: 'Connecting to your fixed home PC server...',
             bridge_connected: 'Connected to your fixed home PC server!',
@@ -114,8 +124,12 @@ document.addEventListener('DOMContentLoaded', () => {
             loading: '載入中...',
             analyzing: '分析中...',
             queued: '排隊處理中...',
+            starting_download: '正在連線取得影音串流...',
             downloading: '正在下載與轉檔...',
             processing: '正在封裝檔案...',
+            converting: '正在轉檔與封裝檔案 (FFmpeg)...',
+            poll_retrying: '網路波動，重試中',
+            cloud_fallback_retry: '偵測到本地 DNS 攔截小紅書，自動切換雲端後端重試中（喚醒約需 30 秒）...',
             error_no_url: '請輸入有效的連結',
             error_no_backend: '尚未設定雲端後端網址，請點擊右上「伺服器設定」或改用下方 Windows 可攜版。',
             error_fetch_info: '獲取影片資訊失敗',
@@ -132,6 +146,11 @@ document.addEventListener('DOMContentLoaded', () => {
             settings_saved: '已儲存伺服器設定。',
             settings_reset: '已清除自訂伺服器設定。',
             api_autoconnect: '已從專屬連結自動連線至後端伺服器！',
+            share_btn_default: '分享 / 存到檔案或相簿',
+            share_preparing: '準備分享中',
+            share_tap_again: '檔案已就緒，再點一次立即分享',
+            share_ready_hint: '檔案已下載至暫存，請再點一次上方「檔案已就緒，再點一次立即分享」開啟系統分享選單！',
+            share_fetch_fail: '讀取檔案失敗，請改用上方「點擊儲存檔案」。',
             share_unsupported: '此瀏覽器不支援直接分享檔案，請點擊上方「點擊儲存檔案」。',
             bridge_connecting: '正在連線至固定家用電腦伺服器...',
             bridge_connected: '已自動連線至最新家用電腦伺服器！',
@@ -326,6 +345,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return baseLocation;
     }
 
+    function setShareButtonDefault() {
+        shareFileBtn.disabled = false;
+        shareFileBtn.innerHTML =
+            `<span class="material-symbols-outlined">ios_share</span> ` +
+            `<span data-en="${translations.en.share_btn_default}" data-zh="${translations.zh.share_btn_default}">${translations[currentLang].share_btn_default}</span>`;
+    }
+
     function resetSavePreview() {
         saveFileSection.classList.add('hidden');
         mediaPreviewWrap.classList.add('hidden');
@@ -336,11 +362,71 @@ document.addEventListener('DOMContentLoaded', () => {
         videoPreview.removeAttribute('src');
         videoPreview.classList.add('hidden');
         shareFileBtn.classList.add('hidden');
+        setShareButtonDefault();
         lastSavedLocalPath = null;
         lastReadyFileUrl = '';
         lastReadyFilename = '';
         lastReadyMimeType = '';
+        lastReadyFile = null;
     }
+
+    function formatBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes < 0) return '';
+        if (bytes < 1024) return `${Math.round(bytes)} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function formatEta(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) return '';
+        const total = Math.round(seconds);
+        const mins = Math.floor(total / 60);
+        const secs = total % 60;
+        if (mins > 0) return `${mins}m ${secs}s`;
+        return `${secs}s`;
+    }
+
+    function formatSecondsAsClock(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) return '--:--';
+        const total = Math.round(seconds);
+        const hours = Math.floor(total / 3600);
+        const mins = Math.floor((total % 3600) / 60);
+        const secs = total % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        return hours > 0 ? `${hours}:${pad(mins)}:${pad(secs)}` : `${mins}:${pad(secs)}`;
+    }
+
+    function buildDownloadDetail(prog) {
+        const parts = [];
+        const dl = Number(prog && prog.downloaded_bytes);
+        const tot = Number(prog && prog.total_bytes);
+        if (Number.isFinite(dl) && dl > 0) {
+            if (Number.isFinite(tot) && tot > 0) {
+                parts.push(`${formatBytes(dl)} / ${formatBytes(tot)}`);
+            } else {
+                parts.push(formatBytes(dl));
+            }
+        }
+        const spd = Number(prog && prog.speed);
+        if (Number.isFinite(spd) && spd > 0) {
+            parts.push(`${formatBytes(spd)}/s`);
+        }
+        const eta = Number(prog && prog.eta);
+        if (Number.isFinite(eta) && eta > 0) {
+            parts.push(`ETA ${formatEta(eta)}`);
+        }
+        return parts.join(' · ');
+    }
+
+    function backfillDurationFromMedia(el) {
+        if (!el || !Number.isFinite(el.duration) || el.duration <= 0) return;
+        const currentText = (videoDuration.textContent || '').trim();
+        if (!currentText || currentText === '--:--' || currentText === 'Unknown') {
+            videoDuration.textContent = formatSecondsAsClock(el.duration);
+        }
+    }
+    audioPreview.addEventListener('loadedmetadata', () => backfillDurationFromMedia(audioPreview));
+    videoPreview.addEventListener('loadedmetadata', () => backfillDurationFromMedia(videoPreview));
 
     function updateLanguage() {
         document.documentElement.lang = currentLang === 'en' ? 'en' : 'zh-Hant';
@@ -498,6 +584,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const cloudFallback = normalizeApiUrl(cfg.apiBaseUrl);
                 const activeBase = getApiBaseUrl();
                 if (cloudFallback && cloudFallback !== activeBase) {
+                    showStatus('cloud_fallback_retry', false);
                     try {
                         const retryResp = await apiFetch('/api/info', {
                             method: 'POST',
@@ -509,6 +596,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (retryData && retryData.success) {
                             currentApiBaseOverride = cloudFallback;
                             data = retryData;
+                            hideStatus();
                         }
                     } catch {
                         // Preserve original error if cloud fallback is unreachable
@@ -520,7 +608,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentUrl = url;
                 videoTitle.textContent = data.title;
                 videoThumb.src = data.thumbnail || '';
-                videoDuration.textContent = data.duration || '--:--';
+                const safeDuration = (!data.duration || data.duration === 'Unknown') ? '--:--' : data.duration;
+                videoDuration.textContent = safeDuration;
                 durationLimitWarn.classList.toggle('hidden', !data.exceeds_limit);
 
                 videoInfoSection.classList.remove('hidden');
@@ -549,11 +638,12 @@ document.addEventListener('DOMContentLoaded', () => {
         resetSavePreview();
         setLoadingState(downloadBtn, true);
         progressSection.classList.remove('hidden');
+        progressSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
         progressBar.style.backgroundColor = 'var(--brand-accent)';
         progressBar.style.width = '5%';
         progressBar.style.animation = 'pulse 2s infinite';
-        progressPercentage.textContent = '0%';
+        progressPercentage.textContent = '...';
         progressStatusText.textContent = translations[currentLang].queued;
 
         try {
@@ -591,16 +681,31 @@ document.addEventListener('DOMContentLoaded', () => {
                         return;
                     }
 
-                    const pct = Math.round(Number(prog.progress) || 0);
-                    progressPercentage.textContent = `${pct}%`;
-                    progressBar.style.width = `${Math.max(5, pct)}%`;
+                    const hasPct = prog.progress !== null && prog.progress !== undefined && Number.isFinite(Number(prog.progress));
 
                     if (prog.status === 'queued') {
+                        progressPercentage.textContent = '0%';
+                        progressBar.style.width = '5%';
                         progressStatusText.textContent = translations[currentLang].queued;
                     } else if (prog.status === 'downloading') {
-                        progressStatusText.textContent = translations[currentLang].downloading;
+                        const baseLabel = prog.stage === 'starting'
+                            ? translations[currentLang].starting_download
+                            : translations[currentLang].downloading;
+                        const detail = buildDownloadDetail(prog);
+                        progressStatusText.textContent = detail ? `${baseLabel} (${detail})` : baseLabel;
+                        if (hasPct) {
+                            const pct = Math.round(Number(prog.progress));
+                            progressPercentage.textContent = `${pct}%`;
+                            progressBar.style.width = `${Math.max(5, pct)}%`;
+                        } else {
+                            const dlText = formatBytes(Number(prog.downloaded_bytes));
+                            progressPercentage.textContent = dlText || '...';
+                            progressBar.style.width = '35%';
+                        }
                     } else if (prog.status === 'processing') {
-                        progressStatusText.textContent = translations[currentLang].processing;
+                        progressPercentage.textContent = '100%';
+                        progressBar.style.width = '100%';
+                        progressStatusText.textContent = translations[currentLang].converting;
                     } else if (prog.status === 'ready') {
                         stopPolling();
                         setLoadingState(downloadBtn, false);
@@ -659,6 +764,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 } catch (pollErr) {
                     transientErrors += 1;
+                    progressStatusText.textContent =
+                        `${translations[currentLang].poll_retrying} (${transientErrors}/${MAX_POLL_ERRORS})...`;
                     if (transientErrors >= MAX_POLL_ERRORS) {
                         stopPolling();
                         setLoadingState(downloadBtn, false);
@@ -682,28 +789,89 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    async function invokeNativeShare(file) {
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: lastReadyFilename });
+            return true;
+        }
+        return false;
+    }
+
     // Native Share / Save to Files or Photos (iOS & Android)
     shareFileBtn.addEventListener('click', async () => {
         if (!lastReadyFileUrl) return;
-        setLoadingState(shareFileBtn, true, 'loading');
+
+        if (lastReadyFile) {
+            try {
+                const shared = await invokeNativeShare(lastReadyFile);
+                if (!shared) showStatus('share_unsupported', true);
+            } catch (err) {
+                if (err && err.name !== 'AbortError') {
+                    showStatus('share_unsupported', true);
+                }
+            }
+            return;
+        }
+
+        shareFileBtn.disabled = true;
+        shareFileBtn.innerHTML =
+            `<span class="material-symbols-outlined animated-spin">sync</span> ${translations[currentLang].share_preparing}...`;
+
+        let fetchedFile = null;
         try {
             const resp = await fetch(lastReadyFileUrl);
-            if (!resp.ok) throw new Error('Fetch failed');
-            const blob = await resp.blob();
-            const file = new File([blob], lastReadyFilename || 'audiostudio.mp3', {
+            if (!resp.ok) throw new Error('HTTP_ERROR');
+
+            const contentLength = Number(resp.headers.get('Content-Length') || 0);
+            let blob;
+            if (resp.body && typeof resp.body.getReader === 'function') {
+                const reader = resp.body.getReader();
+                const chunks = [];
+                let received = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    received += value.byteLength;
+                    const progressText = contentLength > 0
+                        ? `${Math.min(100, Math.round((received / contentLength) * 100))}% (${formatBytes(received)} / ${formatBytes(contentLength)})`
+                        : formatBytes(received);
+                    shareFileBtn.innerHTML =
+                        `<span class="material-symbols-outlined animated-spin">sync</span> ${translations[currentLang].share_preparing}... ${progressText}`;
+                }
+                blob = new Blob(chunks, { type: lastReadyMimeType || resp.headers.get('Content-Type') || 'application/octet-stream' });
+            } else {
+                blob = await resp.blob();
+            }
+
+            fetchedFile = new File([blob], lastReadyFilename || 'audiostudio.mp3', {
                 type: lastReadyMimeType || blob.type || 'application/octet-stream'
             });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                await navigator.share({ files: [file], title: lastReadyFilename });
-            } else {
+            lastReadyFile = fetchedFile;
+        } catch {
+            setShareButtonDefault();
+            showStatus('share_fetch_fail', true);
+            return;
+        }
+
+        try {
+            const shared = await invokeNativeShare(fetchedFile);
+            setShareButtonDefault();
+            if (!shared) {
                 showStatus('share_unsupported', true);
             }
         } catch (err) {
-            if (err && err.name !== 'AbortError') {
+            if (err && err.name === 'AbortError') {
+                setShareButtonDefault();
+            } else if (err && err.name === 'NotAllowedError') {
+                shareFileBtn.disabled = false;
+                shareFileBtn.innerHTML =
+                    `<span class="material-symbols-outlined">ios_share</span> ${translations[currentLang].share_tap_again}`;
+                showStatus('share_ready_hint', false);
+            } else {
+                setShareButtonDefault();
                 showStatus('share_unsupported', true);
             }
-        } finally {
-            setLoadingState(shareFileBtn, false);
         }
     });
 

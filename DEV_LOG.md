@@ -397,3 +397,29 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 ### Verification (PDCA Check)
 - `py_compile` (`app.py`, `downloader.py`, `mobile_bridge.py`) and `node --check` (`config.js`, `script.js`, `sw.js`): passed.
 - Unit, security/SSRF redirect, and Flask `test_client()` checks (`ALL_XHS_BACKEND_CHECKS_PASSED`) + JS helper checks (`ALL_XHS_FRONTEND_CHECKS_PASSED`): all passed.
+
+## [2026-11-28] Fix Unknown Duration, Indeterminate Download Progress, 4G Polling & iOS Share Gesture Timeout
+
+### Requirement
+- Fix four user-reported UX/reliability issues observed on iPhone 4G / Xiaohongshu downloads:
+  1. Duration showing `"Unknown"` when metadata lacks top-level `duration` (`formats[].duration` only).
+  2. Download progress bar/percentage stuck or uninformative when `yt-dlp` lacks `total_bytes` or is running FFmpeg postprocessing.
+  3. 4G mobile polling failing prematurely after 3 transient network hiccups (`1000ms * 3`).
+  4. iOS Safari Share button stuck on `"載入中..."` during file download and then falsely reporting `"此瀏覽器不支援直接分享檔案"` when the `fetch()` duration exceeds Safari's user-gesture expiration window (`NotAllowedError`).
+
+### Root Cause Analysis (RCA)
+1. `downloader.py` read only `info_dict.get("duration")` and `info_dict.get("duration_string", "Unknown")` without inspecting `requested_formats`/`formats` or backfilling from `<audio>`/`<video>` `loadedmetadata`.
+2. `app.py` parsed only `_percent_str` and omitted `downloaded_bytes`, `total_bytes`, `speed`, `eta`, and `postprocessor_hooks`, while `script.js` collapsed missing `prog.progress` to `0%`.
+3. `script.js` treated all non-`AbortError` exceptions from `navigator.share()` as `share_unsupported`, masking iOS `NotAllowedError` after slow `fetch()`, and did not expose `Content-Length` in CORS for download progress.
+
+### Corrective and Preventive Actions (CAPA)
+1. **`downloader.py`**: Added `_format_duration()` and `_extract_duration()` (checking top-level, `requested_formats`, and `formats`) for both `get_video_info()` and `_duration_filter`, plus `postprocessor_hook` support in `download_media()`.
+2. **`app.py`**: Added `Content-Length` to `CORS(..., expose_headers=...)`, `_extract_progress_metrics()` (`downloaded_bytes`, `total_bytes`, `speed`, `eta`, `fragment_index/count` fallback), `pp_hook`, and extended `/api/progress/<job_id>` payload.
+3. **`static/js/script.js`, `static/sw.js`**:
+   - Increased polling resilience (`POLL_INTERVAL_MS = 1500`, `MAX_POLL_ERRORS = 8`), added live `MB / total · speed · ETA` display, FFmpeg stage text, and `<audio>`/`<video>` `loadedmetadata` duration backfill.
+   - Streamed `shareFileBtn` file fetch with live percentage/MB feedback, cached `lastReadyFile`, and handled iOS `NotAllowedError` by prompting a clean second tap (`檔案已就緒，再點一次立即分享`) without falsely claiming share is unsupported.
+   - Bumped `CACHE_NAME` in `static/sw.js` to `audiostudio-v6`.
+
+### Verification (PDCA Check)
+- `py_compile` (`app.py`, `downloader.py`, `mobile_bridge.py`) and `node --check` (`config.js`, `script.js`, `sw.js`): passed.
+- Unit, CORS, and Flask tests (`ALL_PROGRESS_DURATION_BACKEND_CHECKS_PASSED`, `ALL_PROGRESS_DURATION_FRONTEND_CHECKS_PASSED`, `ALL_XHS_BACKEND_CHECKS_PASSED`, `ALL_XHS_FRONTEND_CHECKS_PASSED`): all passed.

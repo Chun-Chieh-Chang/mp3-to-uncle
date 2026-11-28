@@ -1,4 +1,5 @@
 import ipaddress
+import math
 import os
 import re
 import shutil
@@ -38,7 +39,7 @@ if getattr(sys, "frozen", False):
 else:
     app = Flask(__name__, static_folder="static", template_folder="templates")
 
-CORS(app, expose_headers=["Content-Disposition"])
+CORS(app, expose_headers=["Content-Disposition", "Content-Length"])
 
 IS_CLOUD = os.environ.get("DEPLOY_ENV", "").lower() == "cloud"
 AUTO_CLEANUP = os.environ.get("AUTO_CLEANUP", "true" if IS_CLOUD else "false").lower() == "true"
@@ -58,6 +59,67 @@ if not has_ffmpeg():
 jobs = {}
 jobs_lock = threading.Lock()
 download_semaphore = threading.Semaphore(MAX_CONCURRENT_JOBS)
+
+
+def _extract_progress_metrics(d):
+    """Extract numeric download progress metrics from a yt-dlp progress hook dict."""
+    downloaded = d.get("downloaded_bytes")
+    if isinstance(downloaded, bool) or not isinstance(downloaded, (int, float)) or downloaded < 0:
+        downloaded = None
+    else:
+        downloaded = int(downloaded)
+
+    total = d.get("total_bytes") or d.get("total_bytes_estimate")
+    if isinstance(total, bool) or not isinstance(total, (int, float)) or total <= 0:
+        total = None
+    else:
+        total = int(total)
+
+    speed = d.get("speed")
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not math.isfinite(speed) or speed <= 0:
+        speed = None
+    else:
+        speed = float(speed)
+
+    eta = d.get("eta")
+    if isinstance(eta, bool) or not isinstance(eta, (int, float)) or not math.isfinite(eta) or eta < 0:
+        eta = None
+    else:
+        eta = int(round(eta))
+
+    progress = None
+    if downloaded is not None and total:
+        progress = max(0.0, min(100.0, (downloaded / total) * 100.0))
+    else:
+        frag_idx = d.get("fragment_index")
+        frag_cnt = d.get("fragment_count")
+        if (
+            not isinstance(frag_idx, bool)
+            and not isinstance(frag_cnt, bool)
+            and isinstance(frag_idx, (int, float))
+            and isinstance(frag_cnt, (int, float))
+            and frag_cnt > 0
+            and frag_idx >= 0
+        ):
+            progress = max(0.0, min(100.0, (frag_idx / frag_cnt) * 100.0))
+        else:
+            raw_percent = ANSI_RE.sub("", str(d.get("_percent_str") or "")).replace("%", "").strip()
+            try:
+                parsed_pct = float(raw_percent)
+                if math.isfinite(parsed_pct):
+                    progress = max(0.0, min(100.0, parsed_pct))
+            except ValueError:
+                pass
+
+    metrics = {
+        "downloaded_bytes": downloaded,
+        "total_bytes": total,
+        "speed": speed,
+        "eta": eta,
+    }
+    if progress is not None:
+        metrics["progress"] = progress
+    return metrics
 
 
 def _update_job(job_id, **fields):
@@ -201,7 +263,12 @@ def api_download():
     with jobs_lock:
         jobs[job_id] = {
             "status": "queued",
-            "progress": 0.0,
+            "progress": None,
+            "downloaded_bytes": 0,
+            "total_bytes": None,
+            "speed": None,
+            "eta": None,
+            "stage": "queued",
             "download_url": None,
             "filename": None,
             "file_path": None,
@@ -212,19 +279,42 @@ def api_download():
 
     def hook(d):
         if d.get("status") == "downloading":
-            try:
-                raw_percent = ANSI_RE.sub("", d.get("_percent_str", "")).replace("%", "").strip()
-                percent = max(0.0, min(100.0, float(raw_percent)))
-                _update_job(job_id, status="downloading", progress=percent)
-            except Exception:
-                _update_job(job_id, status="downloading")
+            metrics = _extract_progress_metrics(d)
+            _update_job(
+                job_id,
+                status="downloading",
+                stage="downloading",
+                progress=metrics.get("progress"),
+                downloaded_bytes=metrics["downloaded_bytes"],
+                total_bytes=metrics["total_bytes"],
+                speed=metrics["speed"],
+                eta=metrics["eta"],
+            )
         elif d.get("status") == "finished":
-            _update_job(job_id, status="processing", progress=100.0)
+            _update_job(
+                job_id,
+                status="processing",
+                stage="converting",
+                progress=100.0,
+                speed=None,
+                eta=0,
+            )
+
+    def pp_hook(d):
+        if d.get("status") in ("started", "processing"):
+            _update_job(
+                job_id,
+                status="processing",
+                stage=d.get("postprocessor") or "converting",
+                progress=100.0,
+                speed=None,
+                eta=0,
+            )
 
     def worker():
         output_dir = (DOWNLOAD_DIR / job_id) if AUTO_CLEANUP else DOWNLOAD_DIR
         with download_semaphore:
-            _update_job(job_id, status="downloading", progress=0.0)
+            _update_job(job_id, status="downloading", stage="starting", progress=None)
             try:
                 result = download_media(
                     validated_url,
@@ -232,6 +322,7 @@ def api_download():
                     quality=quality,
                     progress_hook=hook,
                     output_dir=output_dir,
+                    postprocessor_hook=pp_hook,
                 )
                 if result.get("success"):
                     file_path = result["file_path"]
@@ -239,16 +330,19 @@ def api_download():
                     _update_job(
                         job_id,
                         status="ready",
+                        stage="ready",
                         progress=100.0,
+                        speed=None,
+                        eta=0,
                         file_path=file_path,
                         filename=filename,
                         download_url=f"/api/files/{job_id}",
                         error=None,
                     )
                 else:
-                    _update_job(job_id, status="error", error=result.get("error", "Download failed"))
+                    _update_job(job_id, status="error", stage="error", error=result.get("error", "Download failed"))
             except Exception as e:
-                _update_job(job_id, status="error", error=str(e))
+                _update_job(job_id, status="error", stage="error", error=str(e))
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"success": True, "job_id": job_id, "status": "queued"}), 202
@@ -266,6 +360,11 @@ def api_progress(job_id):
             "job_id": job_id,
             "status": job["status"],
             "progress": job["progress"],
+            "downloaded_bytes": job["downloaded_bytes"],
+            "total_bytes": job["total_bytes"],
+            "speed": job["speed"],
+            "eta": job["eta"],
+            "stage": job["stage"],
             "download_url": job["download_url"],
             "filename": job["filename"],
             "local_path": job["file_path"] if (is_local_req and job["status"] == "ready") else None,
