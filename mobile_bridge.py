@@ -106,14 +106,50 @@ def ensure_cloudflared():
             tmp_bin.unlink(missing_ok=True)
 
 
-def wait_for_local_server(port, timeout=25):
-    """Poll local Flask /api/health until ready or timeout expires."""
+def _is_port_available(port):
+    """Return True only if neither 127.0.0.1 nor 0.0.0.0 has a conflicting listener."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            return False
+    except OSError:
+        pass
+
+    for bind_host in ("127.0.0.1", "0.0.0.0"):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            sock.bind((bind_host, port))
+        except OSError:
+            return False
+        finally:
+            sock.close()
+    return True
+
+
+def select_available_port(preferred_port=5000, max_attempts=20):
+    """Pick preferred_port if free on both loopback and wildcard, else next free port."""
+    for candidate in range(preferred_port, preferred_port + max_attempts):
+        if _is_port_available(candidate):
+            return candidate
+    raise RuntimeError(
+        f"找不到可用的本機連接埠 ({preferred_port}-{preferred_port + max_attempts - 1})，請先關閉佔用程式。"
+    )
+
+
+def wait_for_local_server(port, timeout=25, proc=None):
+    """Poll local Flask /api/health and /bridge until ready or timeout/exit."""
     health_url = f"http://127.0.0.1:{port}/api/health"
+    bridge_url = f"http://127.0.0.1:{port}/bridge"
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if proc is not None and proc.poll() is not None:
+            return False
         try:
-            with urllib.request.urlopen(health_url, timeout=2) as resp:
-                if resp.status == 200:
+            with urllib.request.urlopen(health_url, timeout=2) as h_resp, urllib.request.urlopen(
+                bridge_url, timeout=2
+            ) as b_resp:
+                if h_resp.status == 200 and b_resp.status == 200:
                     return True
         except Exception:
             time.sleep(0.5)
@@ -465,7 +501,7 @@ def _start_flask_server(port):
         cwd=str(BASE_DIR),
         env=flask_env,
     )
-    if not wait_for_local_server(port):
+    if not wait_for_local_server(port, proc=flask_proc):
         _terminate_proc(flask_proc)
         raise RuntimeError("本機 Flask 伺服器啟動逾時，請確認連接埠未被佔用或依賴套件已安裝。")
     return flask_proc
@@ -581,7 +617,10 @@ def main():
         print(f"MOBILE_BRIDGE_CHECK_OK python={sys.executable}")
         return 0
 
-    port = int(os.environ.get("PORT", "5000"))
+    preferred_port = int(os.environ.get("PORT", "5000"))
+    port = select_available_port(preferred_port)
+    if port != preferred_port:
+        print(f"[Mobile Bridge] 連接埠 {preferred_port} 已被其他程式佔用，自動改用連接埠 {port}。")
     cloudflared_bin = ensure_cloudflared()
 
     state = {

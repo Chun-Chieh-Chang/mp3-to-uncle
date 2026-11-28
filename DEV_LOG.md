@@ -437,3 +437,21 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 
 ### Verification (PDCA Check)
 - Parsed `.github/workflows/deploy.yml` with `yaml.safe_load` and asserted `build`/`deploy` job split, `needs: build`, `environment: github-pages`, and step placement (`SPLIT_WORKFLOW_YAML_OK`).
+
+## [2026-11-28] Prevent Windows Port-5000 Shadowing in Mobile Bridge
+
+### Problem
+- Launching `start_mobile_bridge.bat` opened `http://127.0.0.1:5000/bridge?...` in the browser and hit `404 Not Found`.
+
+### Root Cause Analysis (RCA)
+- An older portable `AudioStudio.exe` instance (`C:\Users\3kids\Desktop\AudioStudio.exe`) was already running in the background and bound specifically to `127.0.0.1:5000`.
+- `mobile_bridge.py` launched `app.py` on `0.0.0.0:5000` without checking whether `127.0.0.1:5000` was already occupied; on Windows, `127.0.0.1:5000` shadows `0.0.0.0:5000`, so both `/api/health` (returning 200 from the stale `AudioStudio.exe`) and `/bridge` (returning 404) were intercepted by the old binary.
+
+### Corrective and Preventive Actions (CAPA)
+- **`mobile_bridge.py`**:
+  1. Added `_is_port_available()` (probing `127.0.0.1` reachability plus exclusive binds on both `127.0.0.1` and `0.0.0.0` with `SO_EXCLUSIVEADDRUSE`) and `select_available_port()` in `main()` to automatically select a clean port (`5001+`) when `5000` is occupied.
+  2. Updated `wait_for_local_server()` to verify both `/api/health` and `/bridge` return HTTP 200 and fail fast if the Flask child process exits early.
+
+### Verification (PDCA Check)
+- Stopped the stale background `AudioStudio.exe` processes (`PID 1476`, `2340`, `3728`) and confirmed `http://127.0.0.1:5000/api/health` (`js_runtimes: ["node"]`) and `http://127.0.0.1:5000/bridge` both returned `HTTP 200`.
+- `py_compile mobile_bridge.py`, socket shadowing & early-exit unit checks (`ALL_BRIDGE_PORT_CHECKS_PASSED`), and `mobile_bridge.py --check` (`MOBILE_BRIDGE_CHECK_OK`): all passed.
