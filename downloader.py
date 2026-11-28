@@ -15,6 +15,8 @@ import zipfile
 from pathlib import Path
 
 import yt_dlp
+from yt_dlp.utils import int_or_none, js_to_json, url_or_none
+from yt_dlp.utils.traversal import traverse_obj
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -44,6 +46,11 @@ SHARE_URL_RE = re.compile(r"https?://[^\s<>\"'\u3000-\u303F\u4E00-\u9FFF\uFF00-\
 XHS_SHORT_HOSTS = frozenset({"xhslink.cn", "www.xhslink.cn", "xhslink.com", "www.xhslink.com"})
 XHS_WEB_HOSTS = frozenset({"xiaohongshu.com", "www.xiaohongshu.com", "rednote.com", "www.rednote.com"})
 XHS_NOTE_PATH_RE = re.compile(r"^/(?P<path>(?:explore|discovery/item)/[\da-fA-F]+)(?:/|$)")
+XHS_IMAGE_HOST_SUFFIXES = ("xhscdn.com", "ci.xiaohongshu.com")
+XHS_IMAGE_MAX_COUNT = 30
+XHS_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+XHS_IMAGE_FORMATS = ("png", "original")
+IMAGE_EXTENSIONS = {"png", "webp", "jpg", "jpeg"}
 
 
 JS_RUNTIME_BINARIES = (
@@ -310,6 +317,112 @@ def _clean_url(url):
     return _resolve_xiaohongshu_url(url)
 
 
+def _xhs_note_id_from_url(url):
+    """Return the note id from a canonical Xiaohongshu note URL, or None."""
+    parsed = urllib.parse.urlparse(url)
+    match = XHS_NOTE_PATH_RE.match(parsed.path)
+    if not match:
+        return None
+    return match.group("path").rsplit("/", 1)[-1]
+
+
+def validate_xhs_image_url(url):
+    """Allow only Xiaohongshu CDN hosts and reject SSRF-style URL tricks."""
+    cleaned = validate_url(url)
+    parsed = urllib.parse.urlparse(cleaned)
+    hostname = (parsed.hostname or "").lower()
+    if not any(hostname == suffix or hostname.endswith("." + suffix) for suffix in XHS_IMAGE_HOST_SUFFIXES):
+        raise ValueError("Image URL is not hosted on an allowed Xiaohongshu CDN.")
+    if parsed.port and parsed.port not in (80, 443):
+        raise ValueError("Image URL uses a disallowed port.")
+    if parsed.username or parsed.password:
+        raise ValueError("Image URL must not contain credentials.")
+    return cleaned
+
+
+def _extract_xhs_note_state(url):
+    """Parse window.__INITIAL_STATE__ with yt-dlp's own downloader and JSON transform."""
+    note_id = _xhs_note_id_from_url(url)
+    if not note_id:
+        raise ValueError("URL is not a Xiaohongshu note.")
+    ydl_logger = _YdlCaptureLogger()
+    ydl_opts = _build_ydl_opts({"skip_download": True, "socket_timeout": 30}, ydl_logger=ydl_logger)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            extractor = yt_dlp.extractor.get_info_extractor("XiaoHongShu")(ydl)
+            webpage = extractor._download_webpage(url, note_id)
+            state = extractor._search_json(
+                r"window\.__INITIAL_STATE__\s*=",
+                webpage,
+                "initial state",
+                note_id,
+                transform_source=js_to_json,
+            )
+    except Exception as e:
+        raise RuntimeError(_format_ydl_error(e, ydl_logger)) from e
+
+    detail_map = traverse_obj(state, ("note", "noteDetailMap")) or {}
+    entry = detail_map.get(note_id)
+    if not isinstance(entry, dict):
+        entry = next(
+            (value for value in detail_map.values() if isinstance(value, dict) and value.get("note")),
+            None,
+        )
+    note_info = traverse_obj(entry, ("note",)) if isinstance(entry, dict) else None
+    if not isinstance(note_info, dict):
+        raise RuntimeError("Unable to parse Xiaohongshu note state.")
+    return note_id, note_info
+
+
+def _xhs_images_from_note(note_info):
+    """Build the ordered high-resolution image list from a parsed note."""
+    if traverse_obj(note_info, ("video", "media", "stream", ...)):
+        return []
+    if str(note_info.get("type") or "").lower() == "video":
+        return []
+
+    images = []
+    for item in traverse_obj(note_info, ("imageList", ...)) or []:
+        if not isinstance(item, dict):
+            continue
+        candidates = traverse_obj(item, (("urlDefault", "urlPre"), {url_or_none})) or []
+        candidate = candidates[0] if candidates else None
+        if not candidate:
+            continue
+        try:
+            candidate = validate_xhs_image_url(candidate)
+        except ValueError:
+            continue
+        images.append({
+            "index": len(images),
+            "url": candidate,
+            "width": traverse_obj(item, ("width", {int_or_none})),
+            "height": traverse_obj(item, ("height", {int_or_none})),
+            "is_live_photo": bool(item.get("livePhoto")),
+        })
+    if len(images) > XHS_IMAGE_MAX_COUNT:
+        raise ValueError(f"Note has too many images (maximum {XHS_IMAGE_MAX_COUNT}).")
+    return images
+
+
+def get_xhs_images_info(url):
+    """Return image-note metadata, or None when the note is a video note."""
+    url = _clean_url(validate_url(extract_media_url(url)))
+    note_id, note_info = _extract_xhs_note_state(url)
+    images = _xhs_images_from_note(note_info)
+    if not images:
+        return None
+    title = traverse_obj(note_info, ("title", {str})) or "Xiaohongshu Image Note"
+    return {"note_id": note_id, "title": title, "images": images}
+
+
+def get_xhs_image_extension(url):
+    """Return a safe image extension derived from a validated CDN URL."""
+    path = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1].lower()
+    ext = path.rsplit(".", 1)[-1] if "." in path else ""
+    return ext if ext in IMAGE_EXTENSIONS else "webp"
+
+
 def _get_ffmpeg_location():
     """Return ffmpeg location string if local binary exists, else None."""
     local_ffmpeg = BIN_DIR / FFMPEG_BIN
@@ -505,6 +618,29 @@ def _extract_duration(info_dict):
 def get_video_info(url):
     """Get metadata for a video link (YouTube, TikTok, etc. via yt-dlp)."""
     url = _clean_url(validate_url(extract_media_url(url)))
+    if _xhs_note_id_from_url(url):
+        try:
+            image_note = get_xhs_images_info(url)
+        except Exception as e:
+            logger.warning("Xiaohongshu image-state extraction failed: %s", e)
+            image_note = None
+        if image_note:
+            images = image_note["images"]
+            return {
+                "success": True,
+                "media_type": "images",
+                "title": image_note["title"],
+                "thumbnail": images[0]["url"],
+                "duration": "--:--",
+                "duration_seconds": None,
+                "exceeds_limit": False,
+                "max_duration_seconds": MAX_DURATION_SECONDS,
+                "formats": [],
+                "note_id": image_note["note_id"],
+                "image_count": len(images),
+                "images": images,
+            }
+
     ydl_logger = _YdlCaptureLogger()
     ydl_opts = _build_ydl_opts({
         "skip_download": True,
@@ -526,6 +662,7 @@ def get_video_info(url):
 
             return {
                 "success": True,
+                "media_type": "video",
                 "title": title,
                 "thumbnail": thumbnail,
                 "duration": duration or "--:--",
@@ -625,6 +762,165 @@ def download_media(url, mode="mp3", quality="192", progress_hook=None, output_di
     except Exception as e:
         logger.error(f"Download failed: {e}")
         return {"success": False, "error": _format_ydl_error(e, ydl_logger)}
+
+
+def fetch_xhs_image_bytes(image_url, max_bytes=XHS_IMAGE_MAX_BYTES):
+    """Stream one allowlisted Xiaohongshu CDN image into memory with a hard size cap."""
+    validate_xhs_image_url(image_url)
+    handlers = [_NoRedirectHandler()]
+    proxy = os.environ.get("YTDLP_PROXY", "").strip()
+    if proxy:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    opener = urllib.request.build_opener(*handlers)
+    req = urllib.request.Request(
+        image_url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Referer": "https://www.xiaohongshu.com/",
+        },
+    )
+    with opener.open(req, timeout=30) as resp:
+        declared = resp.headers.get("Content-Length") if resp.headers else None
+        if declared:
+            try:
+                if int(declared) > max_bytes:
+                    raise ValueError("Image exceeds the allowed size limit.")
+            except ValueError as exc:
+                if "allowed size" in str(exc):
+                    raise
+        chunks = []
+        total = 0
+        while True:
+            chunk = resp.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError("Image exceeds the allowed size limit.")
+            chunks.append(chunk)
+    if not chunks:
+        raise ValueError("Image response was empty.")
+    return b"".join(chunks)
+
+
+def _ffmpeg_binary():
+    """Return the bundled or system FFmpeg executable path."""
+    local = BIN_DIR / FFMPEG_BIN
+    if local.exists():
+        return str(local)
+    return shutil.which("ffmpeg") or FFMPEG_BIN
+
+
+def convert_image_bytes_to_png(data):
+    """Convert a downloaded WebP/JPEG image to PNG with the existing FFmpeg binary."""
+    if not data:
+        raise ValueError("Image data is empty.")
+    ensure_ffmpeg()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        source = Path(tmp_dir) / "source.bin"
+        target = Path(tmp_dir) / "output.png"
+        source.write_bytes(data)
+        cmd = [
+            _ffmpeg_binary(), "-y", "-loglevel", "error",
+            "-i", str(source), "-frames:v", "1", "-update", "1", str(target),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=90)
+        stderr = ANSI_RE.sub("", proc.stderr or "").strip()
+        if proc.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
+            raise RuntimeError(f"FFmpeg PNG conversion failed: {stderr[:300] or 'unknown error'}")
+        return target.read_bytes()
+
+
+def _normalize_image_indices(image_indices, count):
+    """Validate selected indices strictly and return them in request order."""
+    if image_indices is None or image_indices == "":
+        return list(range(count))
+    if not isinstance(image_indices, (list, tuple)):
+        raise ValueError("image_indices must be a list of integers.")
+    result = []
+    seen = set()
+    for value in image_indices:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("image_indices must contain only integers.")
+        if value < 0 or value >= count:
+            raise ValueError(f"Image index {value} is out of range.")
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    if not result:
+        raise ValueError("At least one image must be selected.")
+    if len(result) > XHS_IMAGE_MAX_COUNT:
+        raise ValueError(f"Maximum {XHS_IMAGE_MAX_COUNT} images per download.")
+    return result
+
+
+def _safe_filename(raw, max_len=80):
+    """Build a filesystem-safe, bounded output basename."""
+    text = re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", str(raw or "")).strip().strip(".")
+    return (text or "xiaohongshu")[:max_len]
+
+
+def download_xhs_images(url, image_indices=None, image_format="png", progress_hook=None, output_dir=None):
+    """Download selected images as one PNG/image or a ZIP with bounded resources."""
+    if image_format not in XHS_IMAGE_FORMATS:
+        raise ValueError(f"Invalid image format '{image_format}'.")
+    url = _clean_url(validate_url(extract_media_url(url)))
+    note_id, note_info = _extract_xhs_note_state(url)
+    images = _xhs_images_from_note(note_info)
+    if not images:
+        raise ValueError("This note has no downloadable images.")
+    indices = _normalize_image_indices(image_indices, len(images))
+    title = traverse_obj(note_info, ("title", {str})) or note_id
+
+    target_dir = Path(output_dir) if output_dir else DOWNLOAD_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = Path(tempfile.mkdtemp(prefix="xhs-", dir=str(target_dir)))
+    try:
+        saved = []
+        final_ext = "png"
+        for position, index in enumerate(indices, 1):
+            item = images[index]
+            if progress_hook:
+                progress_hook({
+                    "status": "downloading", "downloaded_bytes": 0, "total_bytes": None,
+                    "image_index": index, "image_count": len(indices),
+                })
+            payload = fetch_xhs_image_bytes(item["url"])
+            if image_format == "png":
+                payload = convert_image_bytes_to_png(payload)
+                ext = "png"
+            else:
+                ext = get_xhs_image_extension(item["url"])
+            final_ext = ext
+            path = work_dir / f"{position:02d}.{ext}"
+            path.write_bytes(payload)
+            saved.append(path)
+            if progress_hook:
+                progress_hook({
+                    "status": "downloading", "downloaded_bytes": len(payload),
+                    "total_bytes": len(payload), "image_index": index,
+                    "image_count": len(indices),
+                })
+
+        base = f"{_safe_filename(title)}-{note_id[:8]}"
+        if len(saved) == 1:
+            final_path = target_dir / f"{base}.{final_ext}"
+            shutil.move(str(saved[0]), str(final_path))
+        else:
+            final_path = target_dir / f"{base}.zip"
+            with zipfile.ZipFile(final_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for path in saved:
+                    archive.write(path, arcname=path.name)
+        if not final_path.is_file() or final_path.stat().st_size == 0:
+            raise RuntimeError("Output image file is empty.")
+        if progress_hook:
+            progress_hook({"status": "finished"})
+        return {"success": True, "file_path": str(final_path), "title": title}
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def ensure_ffmpeg():

@@ -74,7 +74,7 @@
         <section class="downloader-card">
             <div class="input-group">
                 <span class="material-symbols-outlined input-icon">link</span>
-                <input type="url" id="urlInput" placeholder="在此貼上影片連結..." data-en-placeholder="Paste a video link here..." data-zh-placeholder="在此貼上影片連結..." autocomplete="off" inputmode="url">
+                <input type="url" id="urlInput" placeholder="貼上影片或小紅書圖文連結..." data-en-placeholder="Paste a video or Xiaohongshu image note link..." data-zh-placeholder="貼上影片或小紅書圖文連結..." autocomplete="off" inputmode="url">
                 <div class="input-actions">
                     <button type="button" id="pasteBtn" class="btn-input-action" aria-label="貼上連結" title="貼上">
                         <span class="material-symbols-outlined">content_paste</span>
@@ -105,7 +105,7 @@
                         <span data-en="This video exceeds the cloud duration limit. Please use the Windows portable version for long videos." data-zh="此影片長度超過雲端轉檔上限，建議改用下方 Windows 可攜單機版下載。">此影片長度超過雲端轉檔上限，建議改用下方 Windows 可攜單機版下載。</span>
                     </div>
 
-                    <div class="controls-grid">
+                    <div id="videoControlsGrid" class="controls-grid">
                         <div class="controls-group">
                             <label for="modeSelect" class="t-label" data-en="Output Format" data-zh="輸出格式">輸出格式</label>
                             <select id="modeSelect" class="custom-select">
@@ -168,6 +168,42 @@
                         <p id="iosSaveHint" class="save-hint" data-en="iPhone users: Tap 'Tap to Save File' -> choose 'Download', then tap the blue '↓' icon in Safari's address bar or open Files app -> iCloud Drive / On My iPhone -> Downloads." data-zh="iPhone 用戶：點擊「點擊儲存檔案」並選「下載」後，可點 Safari 網址列藍色「↓」圖示直接開啟，或到「檔案 App → iCloud 雲碟 / 我的 iPhone → 下載項目」查看。">iPhone 用戶：點擊「點擊儲存檔案」並選「下載」後，可點 Safari 網址列藍色「↓」圖示直接開啟，或到「檔案 App → iCloud 雲碟 / 我的 iPhone → 下載項目」查看。</p>
                     </div>
                 </div>
+            </div>
+
+            <!-- Xiaohongshu Image Gallery -->
+            <div id="imageGallerySection" class="image-gallery-section hidden">
+                <div class="gallery-header">
+                    <span class="material-symbols-outlined">photo_library</span>
+                    <strong id="imageCountText" data-en="Image note" data-zh="圖文筆記">圖文筆記</strong>
+                </div>
+                <div class="gallery-toolbar">
+                    <button type="button" id="selectAllImagesBtn" class="btn-secondary-sm">
+                        <span class="material-symbols-outlined">checklist</span>
+                        <span data-en="Select all" data-zh="全選">全選</span>
+                    </button>
+                    <button type="button" id="clearSelectionImagesBtn" class="btn-secondary-sm">
+                        <span class="material-symbols-outlined">deselect</span>
+                        <span data-en="Clear selection" data-zh="取消全選">取消全選</span>
+                    </button>
+                    <select id="imageFormatSelect" class="custom-select gallery-format-select" aria-label="輸出格式">
+                        <option value="png" data-en="PNG (recommended)" data-zh="PNG（建議）">PNG（建議）</option>
+                        <option value="original" data-en="Original file" data-zh="原始檔">原始檔</option>
+                    </select>
+                    <button type="button" id="downloadSelectedImagesBtn" class="btn-accent">
+                        <span class="material-symbols-outlined">download</span>
+                        <span data-en="Download selected" data-zh="下載勾選圖片">下載勾選圖片</span>
+                    </button>
+                    <button type="button" id="shareSelectedImagesBtn" class="btn-outline">
+                        <span class="material-symbols-outlined">ios_share</span>
+                        <span data-en="Share selected" data-zh="分享勾選圖片">分享勾選圖片</span>
+                    </button>
+                    <button type="button" id="zipAllImagesBtn" class="btn-primary">
+                        <span class="material-symbols-outlined">folder_zip</span>
+                        <span data-en="Download all as ZIP" data-zh="一鍵打包 ZIP">一鍵打包 ZIP</span>
+                    </button>
+                </div>
+                <div id="imageGalleryGrid" class="image-gallery-grid"></div>
+                <p class="gallery-hint" data-en="iPhone users: use Share to save images to Photos, or download the ZIP to Files." data-zh="iPhone 用戶：可用「分享」直接存到相簿，或下載 ZIP 到「檔案」App。">iPhone 用戶：可用「分享」直接存到相簿，或下載 ZIP 到「檔案」App。</p>
             </div>
 
             <!-- Error/Status Messages -->

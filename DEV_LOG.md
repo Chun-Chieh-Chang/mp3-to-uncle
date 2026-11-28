@@ -513,3 +513,47 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 
 ### Verification (PDCA Check)
 - `node --check` (`config.js`, `script.js`, `sw.js`), JS unit suites (`ALL_PWA_FEATURE_CHECKS_PASSED`, `ALL_PROGRESS_DURATION_FRONTEND_CHECKS_PASSED`, `ALL_XHS_FRONTEND_CHECKS_PASSED`), and Flask `test_client()` checks (`ALL_FOLLOWUP_CLEANUP_CHECKS_PASSED`): all passed.
+
+## [2026-11-28] Xiaohongshu Image Note Download — Feasibility Audit & Implementation Plan
+
+### Requirement
+- User requested adding support for downloading Xiaohongshu image notes ("能否增加下載小紅書的圖片的功能"), and instructed to draft an implementation plan and update `handoff.md` and `DEV_LOG.md` first before writing code.
+
+### Root Cause Analysis (RCA)
+1. **Why Xiaohongshu image notes currently fail**: Inspected installed `yt_dlp/extractor/xiaohongshu.py` (`XiaoHongShuIE`). `XiaoHongShuIE._real_extract()` fetches `www.xiaohongshu.com/(explore|discovery/item)/<id>` and parses `window.__INITIAL_STATE__` (`note.noteDetailMap[id].note`) via `yt_dlp.utils.js_to_json`. It builds `formats` solely from `note.video.media.stream`; pure image notes (`type == "normal"`) have empty `formats`, causing `yt-dlp` extraction to fail even though every high-resolution image URL (`urlDefault`, `urlPre`, `infoList`, dimensions, `livePhoto` flags) is already present under `note.imageList`.
+2. **Reusable existing pipeline**: `downloader.py` already handles share-text URL extraction (`extract_media_url()`), SSRF checks (`validate_url()`), `xhslink.cn` & overseas `rednote.com/login?redirectPath=...` canonicalization (`_resolve_xiaohongshu_url()`), and FFmpeg availability (`has_ffmpeg()`). Frontend `static/js/script.js` already implements automatic Render cloud fallback (`currentApiBaseOverride`) when local Taiwan ISP DNS intercepts `xiaohongshu.com` with self-signed certificates.
+3. **Security & UX constraints identified**:
+   - Browser direct loading of `xhscdn.com` can hit Referer/hotlink/CORS blocks; backend must expose a **token-scoped** image proxy (`GET /api/xhs-image/<gallery_token>/<index>`) backed by server-side CDN host allowlisting rather than an arbitrary-URL open proxy.
+   - Xiaohongshu often serves WebP images; iOS Photos and older Windows viewers prefer JPG (convertible via existing FFmpeg).
+   - iOS Safari blocks multi-file simultaneous downloads, requiring ZIP packaging and/or Web Share (`navigator.share`).
+
+### Planned Architecture & Pending Decisions
+- **`downloader.py`**: Add XHS CDN allowlist, `_extract_xhs_note_state()`, `get_xhs_images_info()` (integrated cleanly into `get_video_info()` with `media_type: "images"` vs `"video"`), and `download_xhs_images()` supporting single-image or ZIP output, optional FFmpeg JPG conversion, per-image progress hooks, and strict index/count/byte bounds.
+- **`app.py`**: Issue short-lived `gallery_token` on image note `POST /api/info`, add `GET /api/xhs-image/<gallery_token>/<int:index>` token-scoped proxy, extend `POST /api/download` (`mode="images"`), and register `.zip`/image MIME types in `serve_file()`.
+- **`templates/index.html`, `static/css/style.css`, `static/js/script.js`, `static/sw.js`**: Add responsive `#imageGallerySection` (2 cols mobile 375px / 3 cols desktop, 4px spacing, Color Master Palette, `>= 44x44px` targets), selection & single/ZIP download + Web Share integration preserving `currentApiBaseOverride`, and bump `CACHE_NAME` to `audiostudio-v9`.
+- **Open Decisions Awaiting User Confirmation**:
+  1. Download & preview mode (Gallery preview + single save/share + ZIP vs single-only vs ZIP-only).
+  2. Output image format (FFmpeg auto-convert to JPG vs keep original WebP).
+  3. Scope for Xiaohongshu Live Photos (static images in Phase 1 vs also downloading Live Photo MP4s).
+
+### Status
+- Feasibility verified, plan artifact (`xhs_image_download_plan.md`) created, and `DEV_LOG.md` / `handoff.md` updated. Implementation intentionally paused pending user confirmation of the plan and 3 design choices.
+
+## [2026-11-28] Xiaohongshu Image Note Download — Implementation & Verification
+
+### Requirement
+- User confirmed all three recommended choices and explicitly set Q2 default to PNG (the earlier plan artifact said JPG): grid preview with per-image save/share plus one-click ZIP, FFmpeg PNG output with an original-file toggle, and static images only in phase 1.
+
+### Design
+- Data shape: `XhsImage {index, url, width, height, is_live_photo}` -> `XhsGallery {note_id, title, images, gallery_token}` -> image job `{mode: "images", image_indices, image_format}`.
+- `downloader.py` parses `window.__INITIAL_STATE__` through yt-dlp's own `_download_webpage` / `_search_json` / `js_to_json`, reusing configured cookies, proxy, and canonical Xiaohongshu URLs. Image URLs are restricted to `xhscdn.com` / `ci.xiaohongshu.com`, with redirects disabled, a Referer header, a 20 MB per-image cap, and a 30-image cap.
+- `app.py` issues a 30-minute `gallery_token`. The proxy endpoint resolves only server-side images by token plus index. Invalid tokens, indices, and formats return 404 or 400. `mode="images"` reuses the existing 202 plus job-polling pipeline.
+- The frontend renders a responsive gallery, applies `currentApiBaseOverride` to thumbnails and all image requests, and keeps the iOS two-tap native share flow.
+
+### Verification (PDCA Check)
+- `py_compile` (`app.py`, `downloader.py`) and `node --check` (`config.js`, `script.js`, `sw.js`) passed.
+- A synthetic `window.__INITIAL_STATE__` parsed to two allowlisted images, and the hostile CDN URL was rejected. Real FFmpeg converted a generated WebP to a valid PNG. The ZIP contained `01.png` and `02.png`, single-image output was a valid PNG, and negative, out-of-range, and non-integer indices were rejected.
+- Flask `test_client()` verified gallery token issuance, PNG/original proxy MIME types, 404/400 guards, a `202 -> ready` image job, ZIP MIME on `/api/files`, and unchanged video-info behavior. Frontend structure assertions and service worker `audiostudio-v9` passed.
+
+### Status
+- Implementation and local verification complete. Pending user permission for `git commit` / `git push` and a live Xiaohongshu URL smoke test after deployment.

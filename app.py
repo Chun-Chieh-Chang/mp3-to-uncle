@@ -1,7 +1,9 @@
+import io
 import ipaddress
 import math
 import os
 import re
+import secrets
 import shutil
 import sys
 import threading
@@ -20,16 +22,21 @@ from downloader import (
     MAX_DURATION_SECONDS,
     VALID_MODES,
     VALID_QUALITIES,
+    convert_image_bytes_to_png,
     download_media,
+    download_xhs_images,
     ensure_ffmpeg,
     extract_media_url,
+    fetch_xhs_image_bytes,
     get_diagnostics,
     get_js_runtimes,
     get_video_info,
+    get_xhs_image_extension,
     get_ytdlp_version,
     has_deno,
     has_ffmpeg,
     validate_url,
+    XHS_IMAGE_FORMATS,
 )
 
 if getattr(sys, "frozen", False):
@@ -55,10 +62,48 @@ GIST_ID_RE = re.compile(r"^[a-f0-9]{20,64}$", re.IGNORECASE)
 if not has_ffmpeg():
     threading.Thread(target=ensure_ffmpeg, daemon=True).start()
 
+VALID_DOWNLOAD_MODES = VALID_MODES + ("images",)
+GALLERY_TTL_SECONDS = 1800
+
 # Thread-safe async job tracking
 jobs = {}
 jobs_lock = threading.Lock()
 download_semaphore = threading.Semaphore(MAX_CONCURRENT_JOBS)
+
+# Short-lived, token-scoped XHS image galleries. Never proxy arbitrary URLs.
+galleries = {}
+galleries_lock = threading.Lock()
+
+
+def _issue_gallery_token(images):
+    """Store a note's allowlisted image list behind an unguessable token."""
+    token = secrets.token_urlsafe(24)
+    with galleries_lock:
+        galleries[token] = {"images": images, "created_at": time.time()}
+        _prune_galleries_locked()
+    return token
+
+
+def _get_gallery_images(token):
+    """Return a copy of the images bound to a live gallery token, or None."""
+    if not isinstance(token, str) or not token:
+        return None
+    with galleries_lock:
+        entry = galleries.get(token)
+        if not entry:
+            return None
+        if time.time() - entry["created_at"] > GALLERY_TTL_SECONDS:
+            galleries.pop(token, None)
+            return None
+        return [dict(image) for image in entry["images"]]
+
+
+def _prune_galleries_locked():
+    """Remove expired gallery tokens. Caller holds galleries_lock."""
+    now = time.time()
+    for token, entry in list(galleries.items()):
+        if now - entry["created_at"] > GALLERY_TTL_SECONDS:
+            galleries.pop(token, None)
 
 
 def _extract_progress_metrics(d):
@@ -149,6 +194,9 @@ def _cleanup_expired_jobs():
             if job_dir.exists() and job_dir.is_dir():
                 shutil.rmtree(job_dir, ignore_errors=True)
 
+        with galleries_lock:
+            _prune_galleries_locked()
+
 
 if AUTO_CLEANUP:
     threading.Thread(target=_cleanup_expired_jobs, daemon=True).start()
@@ -235,8 +283,46 @@ def api_get_info():
         return jsonify({"success": False, "error": str(e)}), 400
 
     info = get_video_info(validated_url)
+    if info.get("success") and info.get("media_type") == "images":
+        info["gallery_token"] = _issue_gallery_token(info.get("images") or [])
+        info["image_formats"] = list(XHS_IMAGE_FORMATS)
     status_code = 200 if info.get("success") else 500
     return jsonify(info), status_code
+
+
+@app.route("/api/xhs-image/<gallery_token>/<int:index>", methods=["GET"])
+def api_xhs_image(gallery_token, index):
+    images = _get_gallery_images(gallery_token)
+    if images is None:
+        return jsonify({"success": False, "error": "Gallery token is invalid or expired."}), 404
+    if index < 0 or index >= len(images):
+        return jsonify({"success": False, "error": "Image index is out of range."}), 400
+
+    image_format = (request.args.get("format") or "png").lower()
+    if image_format not in XHS_IMAGE_FORMATS:
+        return jsonify({"success": False, "error": "Invalid image format"}), 400
+
+    try:
+        payload = fetch_xhs_image_bytes(images[index]["url"])
+        if image_format == "png":
+            payload = convert_image_bytes_to_png(payload)
+            ext = "png"
+            mimetype = "image/png"
+        else:
+            ext = get_xhs_image_extension(images[index]["url"])
+            mimetype = "image/webp" if ext == "webp" else ("image/png" if ext == "png" else "image/jpeg")
+    except Exception as e:
+        return jsonify({"success": False, "error": ANSI_RE.sub("", str(e))[:300]}), 502
+
+    as_attachment = request.args.get("download") == "1"
+    response = send_file(
+        io.BytesIO(payload),
+        mimetype=mimetype,
+        as_attachment=as_attachment,
+        download_name=f"image-{index + 1:02d}.{ext}",
+    )
+    response.headers["Cache-Control"] = "no-store" if as_attachment else "private, max-age=300"
+    return response
 
 
 @app.route("/api/download", methods=["POST"])
@@ -251,9 +337,27 @@ def api_download():
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
 
-    if mode not in VALID_MODES:
+    if mode not in VALID_DOWNLOAD_MODES:
         return jsonify({"success": False, "error": "Invalid mode"}), 400
-    if quality not in VALID_QUALITIES:
+
+    image_indices = None
+    image_format = "png"
+    if mode == "images":
+        image_indices = data.get("image_indices")
+        image_format = str(data.get("image_format") or "png").lower()
+        gallery_images = _get_gallery_images(data.get("gallery_token"))
+        if image_format not in XHS_IMAGE_FORMATS:
+            return jsonify({"success": False, "error": "Invalid image format"}), 400
+        if gallery_images is None:
+            return jsonify({"success": False, "error": "Gallery token is invalid or expired"}), 400
+        if not isinstance(image_indices, list) or not image_indices:
+            return jsonify({"success": False, "error": "At least one image must be selected"}), 400
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0 or value >= len(gallery_images)
+            for value in image_indices
+        ):
+            return jsonify({"success": False, "error": "Image index is out of range"}), 400
+    elif quality not in VALID_QUALITIES:
         return jsonify({"success": False, "error": "Invalid quality"}), 400
 
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -263,6 +367,7 @@ def api_download():
     with jobs_lock:
         jobs[job_id] = {
             "status": "queued",
+            "mode": mode,
             "progress": None,
             "downloaded_bytes": 0,
             "total_bytes": None,
@@ -316,14 +421,23 @@ def api_download():
         with download_semaphore:
             _update_job(job_id, status="downloading", stage="starting", progress=None)
             try:
-                result = download_media(
-                    validated_url,
-                    mode=mode,
-                    quality=quality,
-                    progress_hook=hook,
-                    output_dir=output_dir,
-                    postprocessor_hook=pp_hook,
-                )
+                if mode == "images":
+                    result = download_xhs_images(
+                        validated_url,
+                        image_indices=image_indices,
+                        image_format=image_format,
+                        progress_hook=hook,
+                        output_dir=output_dir,
+                    )
+                else:
+                    result = download_media(
+                        validated_url,
+                        mode=mode,
+                        quality=quality,
+                        progress_hook=hook,
+                        output_dir=output_dir,
+                        postprocessor_hook=pp_hook,
+                    )
                 if result.get("success"):
                     file_path = result["file_path"]
                     filename = os.path.basename(file_path)
@@ -385,7 +499,16 @@ def serve_file(job_id_or_filename):
         resolved = Path(file_path)
         if resolved.is_file():
             ext = resolved.suffix.lower()
-            mimetype = "audio/mpeg" if ext == ".mp3" else ("video/mp4" if ext == ".mp4" else None)
+            mimetypes = {
+                ".mp3": "audio/mpeg",
+                ".mp4": "video/mp4",
+                ".zip": "application/zip",
+                ".png": "image/png",
+                ".webp": "image/webp",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+            }
+            mimetype = mimetypes.get(ext)
             return send_file(resolved, as_attachment=as_attachment, download_name=filename, mimetype=mimetype)
         return jsonify({"success": False, "error": "File no longer exists or has expired."}), 404
 

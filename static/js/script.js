@@ -34,6 +34,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const qualitySelect = document.getElementById('qualitySelect');
     const modeSelect = document.getElementById('modeSelect');
     const qualityGroup = document.getElementById('qualityGroup');
+    const videoControlsGrid = document.getElementById('videoControlsGrid');
+    const imageGallerySection = document.getElementById('imageGallerySection');
+    const imageGalleryGrid = document.getElementById('imageGalleryGrid');
+    const imageCountText = document.getElementById('imageCountText');
+    const imageFormatSelect = document.getElementById('imageFormatSelect');
+    const selectAllImagesBtn = document.getElementById('selectAllImagesBtn');
+    const clearSelectionImagesBtn = document.getElementById('clearSelectionImagesBtn');
+    const downloadSelectedImagesBtn = document.getElementById('downloadSelectedImagesBtn');
+    const shareSelectedImagesBtn = document.getElementById('shareSelectedImagesBtn');
+    const zipAllImagesBtn = document.getElementById('zipAllImagesBtn');
 
     const progressSection = document.getElementById('progressSection');
     const progressBar = document.getElementById('progressBar');
@@ -81,6 +91,14 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastReadyFile = null;
     let lastBridgeRefreshAt = 0;
 
+    let currentMediaType = 'video';
+    let currentGalleryToken = '';
+    let currentImages = [];
+    let currentSelectedImages = new Set();
+    let currentImageCount = 0;
+    let pendingBatchShare = null;
+    const pendingImageShares = new Map();
+
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const isAndroid = /Android/i.test(navigator.userAgent);
@@ -125,7 +143,15 @@ document.addEventListener('DOMContentLoaded', () => {
             bridge_connecting: 'Connecting to your fixed home PC server...',
             bridge_connected: 'Connected to your fixed home PC server!',
             bridge_offline: 'Home PC server is currently offline. Please run start_mobile_bridge.bat on your PC.',
-            bridge_fetch_fail: 'Unable to look up latest home server address. Check your network and try again.'
+            bridge_fetch_fail: 'Unable to look up latest home server address. Check your network and try again.',
+            image_note: 'Image note',
+            image_no_selection: 'Select at least one image first.',
+            image_downloading: 'Downloading images...',
+            image_zipping: 'Packaging images into ZIP...',
+            image_share_preparing: 'Preparing image',
+            image_share_tap_again: 'Image Ready — Tap Again to Share',
+            image_share_hint: 'Image is ready in memory. Tap the button again to open the share sheet.',
+            image_share_unsupported: 'This browser cannot share files directly. Use the download button instead.'
         },
         zh: {
             loading: '載入中...',
@@ -164,7 +190,15 @@ document.addEventListener('DOMContentLoaded', () => {
             bridge_connecting: '正在連線至固定家用電腦伺服器...',
             bridge_connected: '已自動連線至最新家用電腦伺服器！',
             bridge_offline: '家用電腦伺服器目前未開機，請先在電腦啟動 start_mobile_bridge.bat。',
-            bridge_fetch_fail: '無法取得最新家用伺服器位址，請確認網路後再試。'
+            bridge_fetch_fail: '無法取得最新家用伺服器位址，請確認網路後再試。',
+            image_note: '圖文筆記',
+            image_no_selection: '請先勾選至少一張圖片。',
+            image_downloading: '正在下載圖片...',
+            image_zipping: '正在打包 ZIP...',
+            image_share_preparing: '準備分享圖片中',
+            image_share_tap_again: '圖片已就緒，再點一次立即分享',
+            image_share_hint: '圖片已下載至暫存，請再點一次按鈕開啟系統分享選單！',
+            image_share_unsupported: '此瀏覽器不支援直接分享圖片，請改用下載按鈕。'
         }
     };
 
@@ -449,6 +483,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!saveFileSection.classList.contains('hidden')) {
             savedLocationText.textContent = getDefaultSaveLocation(lastSavedLocalPath);
         }
+        if (currentMediaType === 'images') updateImageCountText();
     }
 
     langToggle.addEventListener('click', () => {
@@ -502,6 +537,11 @@ document.addEventListener('DOMContentLoaded', () => {
             thumbnail: jobObj.thumbnail || '',
             duration: jobObj.duration || '--:--',
             apiBaseOverride: jobObj.apiBaseOverride || null,
+            media_type: jobObj.media_type || 'video',
+            gallery_token: jobObj.gallery_token || '',
+            images: Array.isArray(jobObj.images) ? jobObj.images : [],
+            image_format: jobObj.image_format || 'png',
+            selected_indices: Array.isArray(jobObj.selected_indices) ? jobObj.selected_indices : [],
             startedAt: Number(jobObj.startedAt) || Date.now()
         };
         activeJobState = normalized;
@@ -573,6 +613,330 @@ document.addEventListener('DOMContentLoaded', () => {
         return Boolean(msg && /CERTIFICATE_VERIFY_FAILED|self-signed certificate/i.test(msg));
     }
 
+    function getGalleryApiBase() {
+        return currentApiBaseOverride || getApiBaseUrl() || '';
+    }
+
+    function buildImageProxyUrl(token, index, format = 'png', download = false) {
+        const query = `?format=${encodeURIComponent(format)}${download ? '&download=1' : ''}`;
+        return `${getGalleryApiBase()}/api/xhs-image/${encodeURIComponent(token)}/${index}${query}`;
+    }
+
+    function updateImageCountText() {
+        if (!currentImageCount) return;
+        const suffix = currentLang === 'en'
+            ? `${currentImageCount} images`
+            : `${currentImageCount} 張圖片`;
+        imageCountText.textContent = `${translations[currentLang].image_note} · ${suffix}`;
+    }
+
+    function syncImageDownloadLinks() {
+        imageGalleryGrid.querySelectorAll('a.btn-image-action').forEach((link) => {
+            const card = link.closest('.image-card');
+            if (!card) return;
+            const index = Number(card.dataset.index);
+            const format = imageFormatSelect.value || 'png';
+            const ext = format === 'png' ? 'png' : 'webp';
+            link.href = buildImageProxyUrl(currentGalleryToken, index, format, true);
+            link.setAttribute('download', `image-${index + 1}.${ext}`);
+        });
+    }
+
+    function syncImageSelectionUI() {
+        imageGalleryGrid.querySelectorAll('.image-card').forEach((card) => {
+            const index = Number(card.dataset.index);
+            card.classList.toggle('is-selected', currentSelectedImages.has(index));
+            const box = card.querySelector('input[type="checkbox"]');
+            if (box) box.checked = currentSelectedImages.has(index);
+        });
+        const empty = currentSelectedImages.size === 0;
+        downloadSelectedImagesBtn.disabled = empty;
+        shareSelectedImagesBtn.disabled = empty;
+    }
+
+    function renderImageGallery(data) {
+        currentGalleryToken = data.gallery_token || '';
+        currentImages = Array.isArray(data.images) ? data.images : [];
+        currentImageCount = Number(data.image_count || currentImages.length) || currentImages.length;
+        const requested = Array.isArray(data.selected_indices) ? data.selected_indices : null;
+        const selected = requested && requested.length
+            ? requested.filter((i) => Number.isInteger(i) && i >= 0 && i < currentImages.length)
+            : currentImages.map((_, index) => index);
+        currentSelectedImages = new Set(selected);
+        imageGalleryGrid.innerHTML = '';
+
+        currentImages.forEach((image, index) => {
+            const card = document.createElement('div');
+            card.className = 'image-card';
+            card.dataset.index = String(index);
+
+            const label = document.createElement('label');
+            label.className = 'image-card-label';
+            const previewUrl = buildImageProxyUrl(currentGalleryToken, index, 'png');
+            label.innerHTML =
+                `<input type="checkbox" data-image-index="${index}" ${currentSelectedImages.has(index) ? 'checked' : ''}>` +
+                `<img src="${previewUrl}" alt="Image ${index + 1}" loading="lazy">`;
+
+            const actions = document.createElement('div');
+            actions.className = 'image-card-actions';
+            actions.innerHTML =
+                `<a class="btn-image-action" href="#" data-en="Save" data-zh="下載">下載</a>` +
+                `<button type="button" class="btn-image-action" data-share-index="${index}" data-en="Share" data-zh="分享">分享</button>`;
+
+            card.appendChild(label);
+            card.appendChild(actions);
+            imageGalleryGrid.appendChild(card);
+        });
+
+        syncImageDownloadLinks();
+        syncImageSelectionUI();
+        updateImageCountText();
+    }
+
+    function resetShareButton(button, originalLabel) {
+        button.disabled = false;
+        if (originalLabel) {
+            button.innerHTML = originalLabel;
+        } else {
+            button.innerHTML =
+                `<span class="material-symbols-outlined">ios_share</span> ` +
+                `<span data-en="Share" data-zh="分享">${currentLang === 'en' ? 'Share' : '分享'}</span>`;
+        }
+    }
+
+    async function invokeNativeShareNamed(file, filename) {
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: filename });
+            return;
+        }
+        throw new DOMException('Share unsupported', 'NotAllowedError');
+    }
+
+    function handleImageShareError(err, button, originalLabel) {
+        if (err && err.name === 'AbortError') {
+            resetShareButton(button, originalLabel);
+            return;
+        }
+        if (err && err.name === 'NotAllowedError') {
+            button.disabled = false;
+            button.innerHTML =
+                `<span class="material-symbols-outlined">ios_share</span> ${translations[currentLang].image_share_tap_again}`;
+            showStatus('image_share_hint', false);
+            return;
+        }
+        resetShareButton(button, originalLabel);
+        showStatus('image_share_unsupported', true);
+    }
+
+    async function shareImageAt(index, button) {
+        if (!currentGalleryToken) return;
+        const format = imageFormatSelect.value || 'png';
+        const ext = format === 'png' ? 'png' : 'webp';
+        const filename = `image-${index + 1}.${ext}`;
+        const cached = pendingImageShares.get(index);
+
+        if (cached && cached.format === format) {
+            try {
+                await invokeNativeShareNamed(cached.file, filename);
+                pendingImageShares.delete(index);
+                resetShareButton(button, cached.label);
+            } catch (err) {
+                handleImageShareError(err, button, cached.label);
+            }
+            return;
+        }
+
+        const originalLabel = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML =
+            `<span class="material-symbols-outlined animated-spin">sync</span> ${translations[currentLang].image_share_preparing}...`;
+        try {
+            const resp = await fetch(buildImageProxyUrl(currentGalleryToken, index, format));
+            if (!resp.ok) throw new Error('HTTP_ERROR');
+            const blob = await resp.blob();
+            const file = new File([blob], filename, { type: blob.type || 'image/png' });
+            pendingImageShares.set(index, { file, format, label: originalLabel });
+            try {
+                await invokeNativeShareNamed(file, filename);
+                pendingImageShares.delete(index);
+                resetShareButton(button, originalLabel);
+            } catch (err) {
+                handleImageShareError(err, button, originalLabel);
+            }
+        } catch {
+            resetShareButton(button, originalLabel);
+            showStatus('share_fetch_fail', true);
+        }
+    }
+
+    async function startImageDownload(useAll = false) {
+        if (!currentUrl || !currentGalleryToken) return;
+        const indices = useAll
+            ? currentImages.map((_, index) => index)
+            : [...currentSelectedImages].sort((a, b) => a - b);
+        if (!indices.length) {
+            showStatus('image_no_selection', true);
+            return;
+        }
+
+        hideStatus();
+        resetSavePreview();
+        setLoadingState(downloadSelectedImagesBtn, true, 'image_downloading');
+        setLoadingState(zipAllImagesBtn, true, 'image_zipping');
+        progressSection.classList.remove('hidden');
+        progressSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        progressBar.style.backgroundColor = 'var(--brand-accent)';
+        progressBar.style.width = '5%';
+        progressBar.style.animation = 'pulse 2s infinite';
+        progressPercentage.textContent = '...';
+        progressStatusText.textContent = translations[currentLang].image_downloading;
+
+        try {
+            const response = await apiFetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: currentUrl,
+                    mode: 'images',
+                    image_indices: indices,
+                    image_format: imageFormatSelect.value || 'png',
+                    gallery_token: currentGalleryToken
+                }),
+                apiBaseOverride: currentApiBaseOverride
+            });
+            const startData = await response.json();
+            if (!response.ok || !startData.success || !startData.job_id) {
+                throw new Error(startData.error || translations[currentLang].error_download);
+            }
+            saveActiveJob({
+                jobId: startData.job_id,
+                url: currentUrl,
+                mode: 'images',
+                media_type: 'images',
+                gallery_token: currentGalleryToken,
+                images: currentImages,
+                selected_indices: indices,
+                image_format: imageFormatSelect.value || 'png',
+                title: videoTitle.textContent,
+                thumbnail: videoThumb.src,
+                duration: videoDuration.textContent,
+                apiBaseOverride: currentApiBaseOverride,
+                startedAt: Date.now()
+            });
+            startJobPolling(startData.job_id, {
+                mode: 'images',
+                apiBaseOverride: currentApiBaseOverride,
+                isResume: false
+            });
+        } catch (error) {
+            showStatus(null, true, error.message || translations[currentLang].error_download);
+            progressStatusText.textContent = translations[currentLang].failed;
+            progressBar.style.backgroundColor = 'var(--warning)';
+            progressBar.style.animation = 'none';
+        } finally {
+            setLoadingState(downloadSelectedImagesBtn, false);
+            setLoadingState(zipAllImagesBtn, false);
+        }
+    }
+
+    function resetBatchShareButton() {
+        shareSelectedImagesBtn.innerHTML =
+            `<span class="material-symbols-outlined">ios_share</span> ` +
+            `<span data-en="Share selected" data-zh="分享勾選圖片">${currentLang === 'en' ? 'Share selected' : '分享勾選圖片'}</span>`;
+    }
+
+    async function shareSelectedImages() {
+        if (!currentGalleryToken) return;
+        const indices = [...currentSelectedImages].sort((a, b) => a - b);
+        if (!indices.length) {
+            showStatus('image_no_selection', true);
+            return;
+        }
+        if (typeof navigator.share !== 'function') {
+            showStatus('image_share_unsupported', true);
+            return;
+        }
+        if (pendingBatchShare && pendingBatchShare.key === indices.join(',')) {
+            try {
+                await navigator.share(pendingBatchShare.payload);
+                hideStatus();
+            } catch (err) {
+                if (err && err.name !== 'AbortError') showStatus('image_share_unsupported', true);
+            }
+            pendingBatchShare = null;
+            resetBatchShareButton();
+            return;
+        }
+
+        showStatus('image_share_preparing', false);
+        try {
+            const format = imageFormatSelect.value || 'png';
+            const ext = format === 'png' ? 'png' : 'webp';
+            const files = [];
+            for (const index of indices) {
+                const resp = await fetch(buildImageProxyUrl(currentGalleryToken, index, format));
+                if (!resp.ok) throw new Error('HTTP_ERROR');
+                const blob = await resp.blob();
+                files.push(new File([blob], `image-${index + 1}.${ext}`, { type: blob.type || 'image/png' }));
+            }
+            if (navigator.canShare && !navigator.canShare({ files })) {
+                showStatus('image_share_unsupported', true);
+                return;
+            }
+            const payload = { files, title: videoTitle.textContent || translations[currentLang].image_note };
+            try {
+                await navigator.share(payload);
+                hideStatus();
+            } catch (err) {
+                if (err && err.name === 'NotAllowedError') {
+                    pendingBatchShare = { key: indices.join(','), payload };
+                    shareSelectedImagesBtn.innerHTML =
+                        `<span class="material-symbols-outlined">ios_share</span> ${translations[currentLang].image_share_tap_again}`;
+                    showStatus('image_share_hint', false);
+                } else if (err && err.name !== 'AbortError') {
+                    showStatus('image_share_unsupported', true);
+                    resetBatchShareButton();
+                }
+            }
+        } catch {
+            showStatus('share_fetch_fail', true);
+        }
+    }
+
+    imageGalleryGrid.addEventListener('change', (event) => {
+        const box = event.target.closest('input[data-image-index]');
+        if (!box) return;
+        const index = Number(box.dataset.imageIndex);
+        if (box.checked) currentSelectedImages.add(index);
+        else currentSelectedImages.delete(index);
+        syncImageSelectionUI();
+    });
+
+    imageGalleryGrid.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-share-index]');
+        if (button) shareImageAt(Number(button.dataset.shareIndex), button);
+    });
+
+    selectAllImagesBtn.addEventListener('click', () => {
+        currentSelectedImages = new Set(currentImages.map((_, index) => index));
+        syncImageSelectionUI();
+    });
+
+    clearSelectionImagesBtn.addEventListener('click', () => {
+        currentSelectedImages.clear();
+        syncImageSelectionUI();
+    });
+
+    imageFormatSelect.addEventListener('change', () => {
+        pendingImageShares.clear();
+        pendingBatchShare = null;
+        syncImageDownloadLinks();
+    });
+
+    downloadSelectedImagesBtn.addEventListener('click', () => startImageDownload(false));
+    zipAllImagesBtn.addEventListener('click', () => startImageDownload(true));
+    shareSelectedImagesBtn.addEventListener('click', shareSelectedImages);
+
     async function apiFetch(endpoint, options = {}) {
         const { allowBridgeRefresh = true, apiBaseOverride = null, ...fetchOptions } = options;
         let apiBase = apiBaseOverride !== null ? apiBaseOverride : getApiBaseUrl();
@@ -629,11 +993,21 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         currentApiBaseOverride = null;
+        currentMediaType = 'video';
+        currentGalleryToken = '';
+        currentImages = [];
+        currentSelectedImages = new Set();
+        currentImageCount = 0;
+        pendingImageShares.clear();
+        pendingBatchShare = null;
         clearActiveJob();
         stopPolling();
         hideStatus();
         setLoadingState(fetchBtn, true, 'analyzing');
         videoInfoSection.classList.add('hidden');
+        imageGallerySection.classList.add('hidden');
+        videoControlsGrid.classList.remove('hidden');
+        downloadBtn.classList.remove('hidden');
         progressSection.classList.add('hidden');
         resetSavePreview();
         durationLimitWarn.classList.add('hidden');
@@ -676,11 +1050,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 videoTitle.textContent = data.title;
                 videoThumb.src = data.thumbnail || '';
                 const safeDuration = (!data.duration || data.duration === 'Unknown') ? '--:--' : data.duration;
-                videoDuration.textContent = safeDuration;
-                durationLimitWarn.classList.toggle('hidden', !data.exceeds_limit);
+                if (data.media_type === 'images') {
+                    currentMediaType = 'images';
+                    videoDuration.textContent = currentLang === 'en'
+                        ? `${data.image_count} images`
+                        : `${data.image_count} 張圖片`;
+                    durationLimitWarn.classList.add('hidden');
+                    videoControlsGrid.classList.add('hidden');
+                    downloadBtn.classList.add('hidden');
+                    imageGallerySection.classList.remove('hidden');
+                    renderImageGallery(data);
+                    if (currentGalleryToken && currentImages.length) {
+                        videoThumb.src = buildImageProxyUrl(currentGalleryToken, 0, 'png');
+                    }
+                } else {
+                    currentMediaType = 'video';
+                    videoDuration.textContent = safeDuration;
+                    durationLimitWarn.classList.toggle('hidden', !data.exceeds_limit);
+                    videoControlsGrid.classList.remove('hidden');
+                    downloadBtn.classList.remove('hidden');
+                    imageGallerySection.classList.add('hidden');
+                }
 
                 videoInfoSection.classList.remove('hidden');
-                modeSelect.focus();
+                if (currentMediaType === 'video') modeSelect.focus();
             } else {
                 showStatus(null, true, data.error || translations[currentLang].error_fetch_info);
             }
@@ -762,24 +1155,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     const apiBase = apiBaseOverride || getApiBaseUrl() || '';
                     const fileUrl = apiBase + prog.download_url;
-                    const filename = prog.filename || (mode === 'mp4' ? 'download.mp4' : 'download.mp3');
-                    const isMp4 = filename.toLowerCase().endsWith('.mp4') || mode === 'mp4';
+                    const fallbackName = mode === 'images' ? 'download.zip' : (mode === 'mp4' ? 'download.mp4' : 'download.mp3');
+                    const filename = prog.filename || fallbackName;
+                    const extension = (filename.toLowerCase().split('.').pop() || '').trim();
+                    const isMp4 = extension === 'mp4' || (mode === 'mp4' && extension !== 'zip');
+                    const isImagesJob = mode === 'images' || currentMediaType === 'images';
                     lastSavedLocalPath = prog.local_path || null;
                     lastReadyFileUrl = fileUrl;
                     lastReadyFilename = filename;
-                    lastReadyMimeType = isMp4 ? 'video/mp4' : 'audio/mpeg';
+                    lastReadyMimeType = extension === 'zip' ? 'application/zip'
+                        : extension === 'png' ? 'image/png'
+                        : extension === 'webp' ? 'image/webp'
+                        : isMp4 ? 'video/mp4' : 'audio/mpeg';
 
                     savedFileName.textContent = filename;
                     savedLocationText.textContent = getDefaultSaveLocation(lastSavedLocalPath);
 
-                    const inlineUrl = `${fileUrl}?inline=1`;
-                    mediaPreviewWrap.classList.remove('hidden');
-                    if (isMp4) {
-                        videoPreview.src = inlineUrl;
-                        videoPreview.classList.remove('hidden');
+                    if (isImagesJob) {
+                        audioPreview.pause();
+                        audioPreview.removeAttribute('src');
+                        audioPreview.classList.add('hidden');
+                        videoPreview.pause();
+                        videoPreview.removeAttribute('src');
+                        videoPreview.classList.add('hidden');
+                        mediaPreviewWrap.classList.add('hidden');
                     } else {
-                        audioPreview.src = inlineUrl;
-                        audioPreview.classList.remove('hidden');
+                        const inlineUrl = `${fileUrl}?inline=1`;
+                        mediaPreviewWrap.classList.remove('hidden');
+                        if (isMp4) {
+                            videoPreview.src = inlineUrl;
+                            videoPreview.classList.remove('hidden');
+                        } else {
+                            audioPreview.src = inlineUrl;
+                            audioPreview.classList.remove('hidden');
+                        }
                     }
 
                     saveFileLink.href = fileUrl;
@@ -1159,9 +1568,31 @@ document.addEventListener('DOMContentLoaded', () => {
             videoTitle.textContent = pendingJob.title || '';
             videoThumb.src = pendingJob.thumbnail || '';
             videoDuration.textContent = pendingJob.duration || '--:--';
-            modeSelect.value = pendingJob.mode || 'mp3';
+            modeSelect.value = pendingJob.mode === 'images' ? 'mp3' : (pendingJob.mode || 'mp3');
             qualitySelect.value = pendingJob.quality || '192';
             syncQualityVisibility();
+            if (pendingJob.media_type === 'images') {
+                currentMediaType = 'images';
+                currentGalleryToken = pendingJob.gallery_token || '';
+                videoControlsGrid.classList.add('hidden');
+                downloadBtn.classList.add('hidden');
+                imageGallerySection.classList.remove('hidden');
+                imageFormatSelect.value = pendingJob.image_format || 'png';
+                renderImageGallery({
+                    gallery_token: currentGalleryToken,
+                    images: pendingJob.images || [],
+                    image_count: (pendingJob.images || []).length,
+                    selected_indices: pendingJob.selected_indices || []
+                });
+                if (currentGalleryToken && (pendingJob.images || []).length) {
+                    videoThumb.src = buildImageProxyUrl(currentGalleryToken, 0, 'png');
+                }
+            } else {
+                currentMediaType = 'video';
+                imageGallerySection.classList.add('hidden');
+                videoControlsGrid.classList.remove('hidden');
+                downloadBtn.classList.remove('hidden');
+            }
             videoInfoSection.classList.remove('hidden');
             progressSection.classList.remove('hidden');
             progressBar.style.backgroundColor = 'var(--brand-accent)';
