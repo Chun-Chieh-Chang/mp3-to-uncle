@@ -1,9 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
     const STORAGE_API_KEY = 'audiostudio_api_base';
     const STORAGE_BRIDGE_GIST_KEY = 'audiostudio_bridge_gist';
+    const STORAGE_ACTIVE_JOB_KEY = 'audiostudio_active_job';
     const STORAGE_THEME_KEY = 'audiostudio_theme';
     const GIST_ID_RE = /^[a-f0-9]{20,64}$/i;
     const BRIDGE_REFRESH_COOLDOWN_MS = 10000;
+    const ACTIVE_JOB_MAX_AGE_MS = 20 * 60 * 1000;
     const POLL_INTERVAL_MS = 1500;
     const MAX_POLL_ERRORS = 8;
 
@@ -68,6 +70,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentApiBaseOverride = null;
     let currentLang = 'zh';
     let activePollTimer = null;
+    let activePollFn = null;
+    let activeJobState = null;
+    let pollInFlight = false;
     let deferredInstallPrompt = null;
     let lastSavedLocalPath = null;
     let lastReadyFileUrl = '';
@@ -115,6 +120,9 @@ document.addEventListener('DOMContentLoaded', () => {
             share_ready_hint: 'File downloaded to browser memory. Tap "File Ready — Tap Again to Share" now to open the iOS Share Sheet.',
             share_fetch_fail: 'Failed to fetch file for sharing. Please tap "Tap to Save File" above.',
             share_unsupported: 'Your browser does not support direct file sharing. Please use "Tap to Save File" above.',
+            resuming_job: 'Resuming background download progress...',
+            job_expired: 'Previous background job expired. Tap "Start Convert & Download" to run again.',
+            share_url_received: 'Shared link detected — analyzing automatically...',
             bridge_connecting: 'Connecting to your fixed home PC server...',
             bridge_connected: 'Connected to your fixed home PC server!',
             bridge_offline: 'Home PC server is currently offline. Please run start_mobile_bridge.bat on your PC.',
@@ -152,6 +160,9 @@ document.addEventListener('DOMContentLoaded', () => {
             share_ready_hint: '檔案已下載至暫存，請再點一次上方「檔案已就緒，再點一次立即分享」開啟系統分享選單！',
             share_fetch_fail: '讀取檔案失敗，請改用上方「點擊儲存檔案」。',
             share_unsupported: '此瀏覽器不支援直接分享檔案，請點擊上方「點擊儲存檔案」。',
+            resuming_job: '正在恢復背景下載進度...',
+            job_expired: '先前的背景下載任務已過期，請重新點擊「開始轉換並下載」。',
+            share_url_received: '已收到分享連結，正在自動分析...',
             bridge_connecting: '正在連線至固定家用電腦伺服器...',
             bridge_connected: '已自動連線至最新家用電腦伺服器！',
             bridge_offline: '家用電腦伺服器目前未開機，請先在電腦啟動 start_mobile_bridge.bat。',
@@ -467,15 +478,71 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setLoadingState(btn, isLoading, customLabelKey = null) {
         if (isLoading) {
+            if (!btn.disabled) {
+                btn.dataset.originalText = btn.innerHTML;
+            }
             btn.disabled = true;
-            btn.dataset.originalText = btn.innerHTML;
             const label = translations[currentLang][customLabelKey || 'loading'];
             btn.innerHTML = `<span class="material-symbols-outlined animated-spin">sync</span> ${label}`;
         } else {
             btn.disabled = false;
             if (btn.dataset.originalText) {
                 btn.innerHTML = btn.dataset.originalText;
+                delete btn.dataset.originalText;
             }
+        }
+    }
+
+    function saveActiveJob(jobObj) {
+        if (!jobObj || !jobObj.jobId) return;
+        const normalized = {
+            jobId: String(jobObj.jobId),
+            url: jobObj.url || '',
+            mode: jobObj.mode || 'mp3',
+            quality: jobObj.quality || '192',
+            title: jobObj.title || '',
+            thumbnail: jobObj.thumbnail || '',
+            duration: jobObj.duration || '--:--',
+            apiBase: jobObj.apiBase || '',
+            apiBaseOverride: jobObj.apiBaseOverride || null,
+            startedAt: Number(jobObj.startedAt) || Date.now()
+        };
+        activeJobState = normalized;
+        try {
+            localStorage.setItem(STORAGE_ACTIVE_JOB_KEY, JSON.stringify(normalized));
+        } catch {
+            // Ignore storage quota errors
+        }
+    }
+
+    function clearActiveJob() {
+        activeJobState = null;
+        try {
+            localStorage.removeItem(STORAGE_ACTIVE_JOB_KEY);
+        } catch {
+            // Ignore storage errors
+        }
+    }
+
+    function loadActiveJob() {
+        try {
+            const raw = localStorage.getItem(STORAGE_ACTIVE_JOB_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || !parsed.jobId) {
+                clearActiveJob();
+                return null;
+            }
+            const age = Date.now() - Number(parsed.startedAt || 0);
+            if (!Number.isFinite(age) || age < 0 || age > ACTIVE_JOB_MAX_AGE_MS) {
+                clearActiveJob();
+                return null;
+            }
+            activeJobState = parsed;
+            return parsed;
+        } catch {
+            clearActiveJob();
+            return null;
         }
     }
 
@@ -484,6 +551,8 @@ document.addEventListener('DOMContentLoaded', () => {
             clearInterval(activePollTimer);
             activePollTimer = null;
         }
+        activePollFn = null;
+        pollInFlight = false;
     }
 
     const XHS_HOST_RE = /(?:^|\.)(?:xiaohongshu\.com|xhslink\.cn|xhslink\.com|rednote\.com)$/i;
@@ -563,6 +632,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         currentApiBaseOverride = null;
+        clearActiveJob();
         stopPolling();
         hideStatus();
         setLoadingState(fetchBtn, true, 'analyzing');
@@ -627,10 +697,163 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    function startJobPolling(jobId, { mode = 'mp3', apiBaseOverride = null, isResume = false } = {}) {
+        stopPolling();
+        let transientErrors = 0;
+
+        async function pollOnce(resetErrors = false) {
+            if (resetErrors) transientErrors = 0;
+            if (pollInFlight) return;
+            pollInFlight = true;
+            try {
+                const progResp = await apiFetch(`/api/progress/${jobId}`, {
+                    allowBridgeRefresh: false,
+                    apiBaseOverride
+                });
+                const prog = await progResp.json();
+                transientErrors = 0;
+
+                if (!progResp.ok || prog.status === 'not_found') {
+                    stopPolling();
+                    clearActiveJob();
+                    setLoadingState(downloadBtn, false);
+                    if (isResume && progResp.status === 404) {
+                        progressSection.classList.add('hidden');
+                        showStatus('job_expired', true);
+                    } else {
+                        showStatus(null, true, prog.error || translations[currentLang].error_download);
+                        progressStatusText.textContent = translations[currentLang].failed;
+                        progressBar.style.backgroundColor = 'var(--warning)';
+                        progressBar.style.animation = 'none';
+                    }
+                    return;
+                }
+
+                const hasPct = prog.progress !== null && prog.progress !== undefined && Number.isFinite(Number(prog.progress));
+
+                if (prog.status === 'queued') {
+                    progressPercentage.textContent = '0%';
+                    progressBar.style.width = '5%';
+                    progressStatusText.textContent = translations[currentLang].queued;
+                } else if (prog.status === 'downloading') {
+                    const baseLabel = prog.stage === 'starting'
+                        ? translations[currentLang].starting_download
+                        : translations[currentLang].downloading;
+                    const detail = buildDownloadDetail(prog);
+                    progressStatusText.textContent = detail ? `${baseLabel} (${detail})` : baseLabel;
+                    if (hasPct) {
+                        const pct = Math.round(Number(prog.progress));
+                        progressPercentage.textContent = `${pct}%`;
+                        progressBar.style.width = `${Math.max(5, pct)}%`;
+                    } else {
+                        const dlText = formatBytes(Number(prog.downloaded_bytes));
+                        progressPercentage.textContent = dlText || '...';
+                        progressBar.style.width = '35%';
+                    }
+                } else if (prog.status === 'processing') {
+                    progressPercentage.textContent = '100%';
+                    progressBar.style.width = '100%';
+                    progressStatusText.textContent = translations[currentLang].converting;
+                } else if (prog.status === 'ready') {
+                    stopPolling();
+                    clearActiveJob();
+                    setLoadingState(downloadBtn, false);
+                    progressBar.style.width = '100%';
+                    progressBar.style.animation = 'none';
+                    progressPercentage.textContent = '100%';
+                    progressStatusText.textContent = translations[currentLang].finished;
+
+                    const apiBase = apiBaseOverride || getApiBaseUrl() || '';
+                    const fileUrl = apiBase + prog.download_url;
+                    const filename = prog.filename || (mode === 'mp4' ? 'download.mp4' : 'download.mp3');
+                    const isMp4 = filename.toLowerCase().endsWith('.mp4') || mode === 'mp4';
+                    lastSavedLocalPath = prog.local_path || null;
+                    lastReadyFileUrl = fileUrl;
+                    lastReadyFilename = filename;
+                    lastReadyMimeType = isMp4 ? 'video/mp4' : 'audio/mpeg';
+
+                    savedFileName.textContent = filename;
+                    savedLocationText.textContent = getDefaultSaveLocation(lastSavedLocalPath);
+
+                    const inlineUrl = `${fileUrl}?inline=1`;
+                    mediaPreviewWrap.classList.remove('hidden');
+                    if (isMp4) {
+                        videoPreview.src = inlineUrl;
+                        videoPreview.classList.remove('hidden');
+                    } else {
+                        audioPreview.src = inlineUrl;
+                        audioPreview.classList.remove('hidden');
+                    }
+
+                    saveFileLink.href = fileUrl;
+                    saveFileLink.setAttribute('download', filename);
+                    if (typeof navigator.share === 'function') {
+                        shareFileBtn.classList.remove('hidden');
+                    }
+                    saveFileSection.classList.remove('hidden');
+                    showStatus('success_download', false);
+
+                    if (!isIOS && !isResume) {
+                        const tempLink = document.createElement('a');
+                        tempLink.href = fileUrl;
+                        tempLink.setAttribute('download', filename);
+                        document.body.appendChild(tempLink);
+                        tempLink.click();
+                        document.body.removeChild(tempLink);
+                    } else {
+                        saveFileSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                } else if (prog.status === 'error') {
+                    stopPolling();
+                    clearActiveJob();
+                    setLoadingState(downloadBtn, false);
+                    showStatus(null, true, prog.error || translations[currentLang].error_download);
+                    progressStatusText.textContent = translations[currentLang].failed;
+                    progressBar.style.backgroundColor = 'var(--warning)';
+                    progressBar.style.animation = 'none';
+                }
+            } catch {
+                transientErrors += 1;
+                progressStatusText.textContent =
+                    `${translations[currentLang].poll_retrying} (${transientErrors}/${MAX_POLL_ERRORS})...`;
+                if (transientErrors >= MAX_POLL_ERRORS) {
+                    stopPolling();
+                    clearActiveJob();
+                    setLoadingState(downloadBtn, false);
+                    const target = apiBaseOverride || getApiBaseUrl() || window.location.origin;
+                    showStatus(null, true, `${translations[currentLang].error_network_download} (${target})`);
+                    progressStatusText.textContent = translations[currentLang].failed;
+                    progressBar.style.backgroundColor = 'var(--warning)';
+                    progressBar.style.animation = 'none';
+                }
+            } finally {
+                pollInFlight = false;
+            }
+        }
+
+        activePollFn = pollOnce;
+        pollOnce();
+        activePollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible' || !activeJobState) return;
+        if (activePollFn) {
+            activePollFn(true);
+        } else {
+            startJobPolling(activeJobState.jobId, {
+                mode: activeJobState.mode || 'mp3',
+                apiBaseOverride: activeJobState.apiBaseOverride || null,
+                isResume: true
+            });
+        }
+    });
+
     downloadBtn.addEventListener('click', async () => {
         if (!currentUrl) return;
 
         stopPolling();
+        clearActiveJob();
         const quality = qualitySelect.value;
         const mode = modeSelect.value;
 
@@ -660,123 +883,23 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const jobId = startData.job_id;
-            let transientErrors = 0;
-
-            activePollTimer = setInterval(async () => {
-                try {
-                    const progResp = await apiFetch(`/api/progress/${jobId}`, {
-                        allowBridgeRefresh: false,
-                        apiBaseOverride: currentApiBaseOverride
-                    });
-                    const prog = await progResp.json();
-                    transientErrors = 0;
-
-                    if (!progResp.ok || prog.status === 'not_found') {
-                        stopPolling();
-                        setLoadingState(downloadBtn, false);
-                        showStatus(null, true, prog.error || translations[currentLang].error_download);
-                        progressStatusText.textContent = translations[currentLang].failed;
-                        progressBar.style.backgroundColor = 'var(--warning)';
-                        progressBar.style.animation = 'none';
-                        return;
-                    }
-
-                    const hasPct = prog.progress !== null && prog.progress !== undefined && Number.isFinite(Number(prog.progress));
-
-                    if (prog.status === 'queued') {
-                        progressPercentage.textContent = '0%';
-                        progressBar.style.width = '5%';
-                        progressStatusText.textContent = translations[currentLang].queued;
-                    } else if (prog.status === 'downloading') {
-                        const baseLabel = prog.stage === 'starting'
-                            ? translations[currentLang].starting_download
-                            : translations[currentLang].downloading;
-                        const detail = buildDownloadDetail(prog);
-                        progressStatusText.textContent = detail ? `${baseLabel} (${detail})` : baseLabel;
-                        if (hasPct) {
-                            const pct = Math.round(Number(prog.progress));
-                            progressPercentage.textContent = `${pct}%`;
-                            progressBar.style.width = `${Math.max(5, pct)}%`;
-                        } else {
-                            const dlText = formatBytes(Number(prog.downloaded_bytes));
-                            progressPercentage.textContent = dlText || '...';
-                            progressBar.style.width = '35%';
-                        }
-                    } else if (prog.status === 'processing') {
-                        progressPercentage.textContent = '100%';
-                        progressBar.style.width = '100%';
-                        progressStatusText.textContent = translations[currentLang].converting;
-                    } else if (prog.status === 'ready') {
-                        stopPolling();
-                        setLoadingState(downloadBtn, false);
-                        progressBar.style.width = '100%';
-                        progressBar.style.animation = 'none';
-                        progressPercentage.textContent = '100%';
-                        progressStatusText.textContent = translations[currentLang].finished;
-
-                        const apiBase = currentApiBaseOverride || getApiBaseUrl() || '';
-                        const fileUrl = apiBase + prog.download_url;
-                        const filename = prog.filename || (mode === 'mp4' ? 'download.mp4' : 'download.mp3');
-                        const isMp4 = filename.toLowerCase().endsWith('.mp4') || mode === 'mp4';
-                        lastSavedLocalPath = prog.local_path || null;
-                        lastReadyFileUrl = fileUrl;
-                        lastReadyFilename = filename;
-                        lastReadyMimeType = isMp4 ? 'video/mp4' : 'audio/mpeg';
-
-                        savedFileName.textContent = filename;
-                        savedLocationText.textContent = getDefaultSaveLocation(lastSavedLocalPath);
-
-                        const inlineUrl = `${fileUrl}?inline=1`;
-                        mediaPreviewWrap.classList.remove('hidden');
-                        if (isMp4) {
-                            videoPreview.src = inlineUrl;
-                            videoPreview.classList.remove('hidden');
-                        } else {
-                            audioPreview.src = inlineUrl;
-                            audioPreview.classList.remove('hidden');
-                        }
-
-                        saveFileLink.href = fileUrl;
-                        saveFileLink.setAttribute('download', filename);
-                        if (typeof navigator.share === 'function') {
-                            shareFileBtn.classList.remove('hidden');
-                        }
-                        saveFileSection.classList.remove('hidden');
-                        showStatus('success_download', false);
-
-                        if (!isIOS) {
-                            const tempLink = document.createElement('a');
-                            tempLink.href = fileUrl;
-                            tempLink.setAttribute('download', filename);
-                            document.body.appendChild(tempLink);
-                            tempLink.click();
-                            document.body.removeChild(tempLink);
-                        } else {
-                            saveFileSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                        }
-                    } else if (prog.status === 'error') {
-                        stopPolling();
-                        setLoadingState(downloadBtn, false);
-                        showStatus(null, true, prog.error || translations[currentLang].error_download);
-                        progressStatusText.textContent = translations[currentLang].failed;
-                        progressBar.style.backgroundColor = 'var(--warning)';
-                        progressBar.style.animation = 'none';
-                    }
-                } catch (pollErr) {
-                    transientErrors += 1;
-                    progressStatusText.textContent =
-                        `${translations[currentLang].poll_retrying} (${transientErrors}/${MAX_POLL_ERRORS})...`;
-                    if (transientErrors >= MAX_POLL_ERRORS) {
-                        stopPolling();
-                        setLoadingState(downloadBtn, false);
-                        const target = currentApiBaseOverride || getApiBaseUrl() || window.location.origin;
-                        showStatus(null, true, `${translations[currentLang].error_network_download} (${target})`);
-                        progressStatusText.textContent = translations[currentLang].failed;
-                        progressBar.style.backgroundColor = 'var(--warning)';
-                        progressBar.style.animation = 'none';
-                    }
-                }
-            }, POLL_INTERVAL_MS);
+            saveActiveJob({
+                jobId,
+                url: currentUrl,
+                mode,
+                quality,
+                title: videoTitle.textContent,
+                thumbnail: videoThumb.src,
+                duration: videoDuration.textContent,
+                apiBase: currentApiBaseOverride || getApiBaseUrl() || '',
+                apiBaseOverride: currentApiBaseOverride,
+                startedAt: Date.now()
+            });
+            startJobPolling(jobId, {
+                mode,
+                apiBaseOverride: currentApiBaseOverride,
+                isResume: false
+            });
         } catch (error) {
             setLoadingState(downloadBtn, false);
             if (error.message !== 'NO_BACKEND') {
@@ -977,19 +1100,89 @@ document.addEventListener('DOMContentLoaded', () => {
         return false;
     }
 
-    // Initialize UI
-    const didAutoConnect = applyApiParamFromUrl();
-    const bridgeGistId = getSavedBridgeGistId();
-    updateLanguage();
-    syncQualityVisibility();
-    syncClearButton();
-    refreshBackendNotice();
-    if (didAutoConnect) {
-        showStatus('api_autoconnect', false);
-    } else if (bridgeGistId) {
-        showStatus('bridge_connecting', false);
-        resolveBridgeFromGist(bridgeGistId);
+    function consumeSharedUrlFromQuery() {
+        try {
+            const currentPageUrl = new URL(window.location.href);
+            const shareKeys = ['url', 'text', 'title'];
+            let sharedUrl = null;
+            let touched = false;
+
+            for (const key of shareKeys) {
+                if (!currentPageUrl.searchParams.has(key)) continue;
+                touched = true;
+                const rawVal = currentPageUrl.searchParams.get(key) || '';
+                if (!sharedUrl && rawVal.trim()) {
+                    const candidate = extractFirstUrl(rawVal);
+                    if (/^https?:\/\//i.test(candidate)) {
+                        sharedUrl = candidate;
+                    }
+                }
+                currentPageUrl.searchParams.delete(key);
+            }
+
+            if (touched) {
+                window.history.replaceState({}, '', currentPageUrl.pathname + currentPageUrl.search + currentPageUrl.hash);
+            }
+            return sharedUrl;
+        } catch {
+            return null;
+        }
     }
+
+    async function initApp() {
+        const didAutoConnect = applyApiParamFromUrl();
+        const bridgeGistId = getSavedBridgeGistId();
+        const sharedUrl = consumeSharedUrlFromQuery();
+        updateLanguage();
+        syncQualityVisibility();
+        syncClearButton();
+        refreshBackendNotice();
+
+        if (didAutoConnect) {
+            showStatus('api_autoconnect', false);
+        } else if (bridgeGistId) {
+            showStatus('bridge_connecting', false);
+            await resolveBridgeFromGist(bridgeGistId);
+        }
+
+        if (sharedUrl) {
+            clearActiveJob();
+            urlInput.value = sharedUrl;
+            syncClearButton();
+            showStatus('share_url_received', false);
+            fetchBtn.click();
+            return;
+        }
+
+        const pendingJob = loadActiveJob();
+        if (pendingJob) {
+            currentUrl = pendingJob.url || '';
+            currentApiBaseOverride = pendingJob.apiBaseOverride || null;
+            urlInput.value = currentUrl;
+            syncClearButton();
+            videoTitle.textContent = pendingJob.title || '';
+            videoThumb.src = pendingJob.thumbnail || '';
+            videoDuration.textContent = pendingJob.duration || '--:--';
+            modeSelect.value = pendingJob.mode || 'mp3';
+            qualitySelect.value = pendingJob.quality || '192';
+            syncQualityVisibility();
+            videoInfoSection.classList.remove('hidden');
+            progressSection.classList.remove('hidden');
+            progressBar.style.backgroundColor = 'var(--brand-accent)';
+            progressBar.style.width = '5%';
+            progressBar.style.animation = 'pulse 2s infinite';
+            progressPercentage.textContent = '...';
+            progressStatusText.textContent = translations[currentLang].resuming_job;
+            setLoadingState(downloadBtn, true);
+            startJobPolling(pendingJob.jobId, {
+                mode: pendingJob.mode || 'mp3',
+                apiBaseOverride: pendingJob.apiBaseOverride || null,
+                isResume: true
+            });
+        }
+    }
+
+    initApp();
 });
 
 // Register Service Worker for PWA

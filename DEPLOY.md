@@ -71,8 +71,10 @@
   2. 轉檔完成後，畫面會顯示**檔案名稱**、**預設儲存位置**及**內嵌音訊／影片試聽播放器**。
   3. 點擊綠色 **「點擊儲存檔案」** 按鈕並選擇「下載」（存於「**檔案 App → 下載項目**」），或點擊 **「分享 / 存到檔案或相簿」** 透過 iOS 原生分享選單直接保存。
   4. 點擊 Safari 下方「分享 → 加入主畫面」即可安裝為桌面 App。
-- **macOS / Android**：
-  - 使用 Safari 或 Chrome 開啟並加入主畫面即可；Android Chrome 亦會顯示「立即安裝到主畫面」按鈕。
+- **macOS / Android / 類原生分享與背景續接體驗**：
+  - **Android 系統分享選單（Web Share Target）**：透過 Chrome「加入主畫面」安裝為 PWA 後，在 YouTube / TikTok / 小紅書 App 點選「分享」即可直接選擇 **AudioStudio** 自動帶入連結分析。
+  - **iPhone 一鍵分享捷徑（iOS Shortcuts）**：於 iPhone「捷徑」App 建立新捷徑（勾選「在分享表單中顯示」、輸入類型選 URL 與文字）→ 加入「URL 編碼」動作 → 加入「打開 URL」動作，網址填 `https://chun-chieh-chang.github.io/mp3-to-uncle/?bridge=<你的GistID>&url=<URL 編碼後的輸入>`，即可在 YouTube / 小紅書按系統分享一鍵開抓。
+  - **切背景自動續接進度**：下載轉檔期間切換至其他 App（如 LINE）或重新整理頁面，回到 PWA 時會自動恢復任務並繼續追蹤進度，無需重新轉檔。
   - 若僅需 24 小時在手機下載 **TikTok**（無需電腦開機），可將 GitHub Repository Variable `API_BASE_URL` 設為 `https://mp3-to-uncle-us.onrender.com`。
 
 ---

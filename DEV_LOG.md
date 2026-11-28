@@ -473,3 +473,25 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 - `CArchiveReader` TOC check (`EXE_ARCHIVE_TOC_OK 789`) confirmed `core.min.js`, `lib.min.js`, `ffmpeg.exe`, and `ffprobe.exe` are bundled without `cloudflared.exe`.
 - Live smoke test of `dist/AudioStudio.exe` on port `5099` (`EXE_LIVE_SMOKE_TEST_OK`) verified `/api/health` (`ffmpeg: true`, `js_runtimes: ["node"]`, `yt_dlp_version: "2026.11.23"`), `/`, `/bridge`, and `/sw.js` (`audiostudio-v6`).
 - Synced to `C:\Users\3kids\Desktop\AudioStudio.exe` with matching SHA256 (`DESKTOP_SYNC_OK`).
+
+## [2026-11-28] PWA Native-Like Upgrades (`share_target`, `?url=` Auto-Analyze & Background Job Resume)
+
+### Requirement
+- Enhance the existing PWA into a native-like mobile experience with:
+  1. Direct system share integration (Android Web Share Target + iOS Shortcuts via `?url=` / `?text=` auto-analysis).
+  2. Automatic progress resume after switching apps or reloading the PWA on iOS/Android.
+
+### Root Cause Analysis (RCA)
+1. `static/manifest.json` lacked `share_target`, and `static/js/script.js` did not parse incoming `?url=` / `?text=` / `?title=` query parameters on startup.
+2. Active download `job_id` lived only in JS memory (`activePollTimer`), so iOS Safari suspending/reloading the PWA page lost the active download state and required restarting from scratch.
+
+### Corrective and Preventive Actions (CAPA)
+1. **`static/manifest.json`**: Added `share_target` (`action: "../"`, `method: "GET"`, `params: { title, text, url }`) for Android Chrome PWA share-sheet integration.
+2. **`static/js/script.js`, `static/sw.js`**:
+   - Added `consumeSharedUrlFromQuery()` to extract URLs from `?url=` / `?text=` / `?title=` while preserving `?bridge=` in the URL bar, auto-triggering analysis once bridge/backend initialization completes.
+   - Added `saveActiveJob()`, `loadActiveJob()` (20-minute TTL), `clearActiveJob()`, `startJobPolling()` with `pollInFlight` overlap guard, `visibilitychange` instant wake-up polling, and double-call protection in `setLoadingState()`.
+   - Bumped Service Worker cache in `static/sw.js` to `audiostudio-v7`.
+3. **`DEPLOY.md`**: Documented Android Share Target, iOS Shortcuts one-tap share setup, and background progress resume.
+
+### Verification (PDCA Check)
+- `node --check` (`config.js`, `script.js`, `sw.js`), Node.js unit suite (`ALL_PWA_FEATURE_CHECKS_PASSED`), and Flask `test_client()` checks (`FLASK_PWA_CHECKS_PASSED`): all passed.
