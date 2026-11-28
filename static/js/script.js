@@ -94,7 +94,6 @@ document.addEventListener('DOMContentLoaded', () => {
             queued: 'Queued for processing...',
             starting_download: 'Connecting to media server...',
             downloading: 'Downloading & Converting...',
-            processing: 'Finalizing audio/video...',
             converting: 'Converting / Packaging (FFmpeg)...',
             poll_retrying: 'Network hiccup, retrying',
             cloud_fallback_retry: 'Local DNS blocked Xiaohongshu; switching to cloud server (may take ~30s to wake)...',
@@ -134,7 +133,6 @@ document.addEventListener('DOMContentLoaded', () => {
             queued: '排隊處理中...',
             starting_download: '正在連線取得影音串流...',
             downloading: '正在下載與轉檔...',
-            processing: '正在封裝檔案...',
             converting: '正在轉檔與封裝檔案 (FFmpeg)...',
             poll_retrying: '網路波動，重試中',
             cloud_fallback_retry: '偵測到本地 DNS 攔截小紅書，自動切換雲端後端重試中（喚醒約需 30 秒）...',
@@ -503,7 +501,6 @@ document.addEventListener('DOMContentLoaded', () => {
             title: jobObj.title || '',
             thumbnail: jobObj.thumbnail || '',
             duration: jobObj.duration || '--:--',
-            apiBase: jobObj.apiBase || '',
             apiBaseOverride: jobObj.apiBaseOverride || null,
             startedAt: Number(jobObj.startedAt) || Date.now()
         };
@@ -891,7 +888,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 title: videoTitle.textContent,
                 thumbnail: videoThumb.src,
                 duration: videoDuration.textContent,
-                apiBase: currentApiBaseOverride || getApiBaseUrl() || '',
                 apiBaseOverride: currentApiBaseOverride,
                 startedAt: Date.now()
             });

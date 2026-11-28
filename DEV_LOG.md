@@ -495,3 +495,21 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 
 ### Verification (PDCA Check)
 - `node --check` (`config.js`, `script.js`, `sw.js`), Node.js unit suite (`ALL_PWA_FEATURE_CHECKS_PASSED`), and Flask `test_client()` checks (`FLASK_PWA_CHECKS_PASSED`): all passed.
+
+## [2026-11-28] Follow-Up Dead Code, Outdated Doc & Duplicate Artifact Cleanup (MECE Audit)
+
+### Requirement
+- Remove newly accrued dead JS fields/translations, outdated documentation references, and the duplicate local `dist/` executable copy while preserving `.bridge_config.json` and `bin/`.
+
+### Root Cause Analysis (RCA)
+1. Replacing `processing` status copy with `converting` in `static/js/script.js` left `translations.en.processing` and `translations.zh.processing` unreferenced, and `saveActiveJob()` stored an unused `apiBase` field alongside `apiBaseOverride`.
+2. `handoff.md` still reflected 2026-11-27 pre-cleanup status (`v1.0.0`, `audiostudio-v4`), and `DEPLOY.md` still showed the retired `mp3-to-uncle.onrender.com` example.
+3. After copying `AudioStudio.exe` to Desktop and publishing GitHub Release `v1.1.0`, `dist/` (106.5 MB) remained as a redundant local duplicate.
+
+### Corrective and Preventive Actions (CAPA)
+1. **`static/js/script.js`, `static/sw.js`**: Removed `translations.*.processing` and unused `apiBase` in `saveActiveJob()`, and bumped `CACHE_NAME` to `audiostudio-v8`.
+2. **`DEPLOY.md`, `handoff.md`**: Replaced the retired Render example in `DEPLOY.md` with a placeholder URL and updated `handoff.md` to reflect the current single-`main` Pages, Render US, Mobile Bridge, `v1.1.0`, and PWA state.
+3. **Local Artifact Cleanup**: Deleted `dist/` while preserving `.bridge_config.json` and `bin/`.
+
+### Verification (PDCA Check)
+- `node --check` (`config.js`, `script.js`, `sw.js`), JS unit suites (`ALL_PWA_FEATURE_CHECKS_PASSED`, `ALL_PROGRESS_DURATION_FRONTEND_CHECKS_PASSED`, `ALL_XHS_FRONTEND_CHECKS_PASSED`), and Flask `test_client()` checks (`ALL_FOLLOWUP_CLEANUP_CHECKS_PASSED`): all passed.

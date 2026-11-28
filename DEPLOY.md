@@ -21,7 +21,7 @@
 4. **Environment Variables（建議設定）**：
    - `MAX_DURATION_SECONDS` = `1800`（Render 免費版為 512 MB RAM，限制 30 分鐘內影音避免 OOM）
 5. 點擊 **Deploy Web Service**，等待建置完成（約 3–5 分鐘）。
-6. 打開 `<你的網址>/api/health`（例如 `https://mp3-to-uncle.onrender.com/api/health`），確認回傳 `"status": "ok"`、`"ffmpeg": true`、`"deno": true`。
+6. 打開 `<你的網址>/api/health`（例如 `https://<你的服務名稱>.onrender.com/api/health`），確認回傳 `"status": "ok"`、`"ffmpeg": true`、`"deno": true`。
 
 ---
 
