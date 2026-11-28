@@ -36,7 +36,7 @@ jobs:
 
       - name: Build AudioStudio.exe
         run: |
-          python -m PyInstaller --onefile --noconsole --name="AudioStudio" --add-data "templates;templates" --add-data "static;static" --add-data "bin;bin" app.py
+          python -m PyInstaller --onefile --noconsole --name="AudioStudio" --collect-all yt_dlp_ejs --add-data "templates;templates" --add-data "static;static" --add-data "bin;bin" app.py
 
       - name: Generate SHA256 checksum
         shell: pwsh

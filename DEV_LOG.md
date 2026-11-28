@@ -455,3 +455,21 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 ### Verification (PDCA Check)
 - Stopped the stale background `AudioStudio.exe` processes (`PID 1476`, `2340`, `3728`) and confirmed `http://127.0.0.1:5000/api/health` (`js_runtimes: ["node"]`) and `http://127.0.0.1:5000/bridge` both returned `HTTP 200`.
 - `py_compile mobile_bridge.py`, socket shadowing & early-exit unit checks (`ALL_BRIDGE_PORT_CHECKS_PASSED`), and `mobile_bridge.py --check` (`MOBILE_BRIDGE_CHECK_OK`): all passed.
+
+## [2026-11-28] Rebuild Portable `AudioStudio.exe` & Bundle `yt_dlp_ejs` in Release Workflow
+
+### Requirement
+- Rebuild the Windows portable executable `AudioStudio.exe` with all latest fixes (native YouTube client + JS runtime detection, Xiaohongshu support, live progress/duration/4G resilience, `/bridge` route) and update the Desktop copy.
+
+### Root Cause Analysis (RCA)
+- `.github/workflows/release-windows.yml` invoked `PyInstaller` without `--collect-all yt_dlp_ejs`, risking omission of `yt_dlp_ejs/yt/solver/core.min.js` and `lib.min.js` needed for YouTube JS challenge solving, while local `bin/` also contained `cloudflared.exe` (55.5 MB) for the mobile bridge.
+
+### Corrective and Preventive Actions (CAPA)
+1. Updated `.github/workflows/release-windows.yml` to pass `--collect-all yt_dlp_ejs` during PyInstaller packaging.
+2. Rebuilt `dist/AudioStudio.exe` cleanly locally (`106,556,805` bytes, SHA256 `4ae6e43ce1f3eee3499253ea448bb5657cdbdabc9e818371f4f23603a923da5e`), explicitly bundling `bin/ffmpeg.exe` and `bin/ffprobe.exe` while excluding `cloudflared.exe`, and cleaned temporary `build/` and `AudioStudio.spec`.
+
+### Verification (PDCA Check)
+- `.github/workflows/release-windows.yml` YAML assertion (`RELEASE_WORKFLOW_YAML_OK`) passed.
+- `CArchiveReader` TOC check (`EXE_ARCHIVE_TOC_OK 789`) confirmed `core.min.js`, `lib.min.js`, `ffmpeg.exe`, and `ffprobe.exe` are bundled without `cloudflared.exe`.
+- Live smoke test of `dist/AudioStudio.exe` on port `5099` (`EXE_LIVE_SMOKE_TEST_OK`) verified `/api/health` (`ffmpeg: true`, `js_runtimes: ["node"]`, `yt_dlp_version: "2026.11.23"`), `/`, `/bridge`, and `/sw.js` (`audiostudio-v6`).
+- Synced to `C:\Users\3kids\Desktop\AudioStudio.exe` with matching SHA256 (`DESKTOP_SYNC_OK`).
