@@ -423,3 +423,17 @@ Create a YouTube Downloader focusing on MP3 conversion with multiple quality opt
 ### Verification (PDCA Check)
 - `py_compile` (`app.py`, `downloader.py`, `mobile_bridge.py`) and `node --check` (`config.js`, `script.js`, `sw.js`): passed.
 - Unit, CORS, and Flask tests (`ALL_PROGRESS_DURATION_BACKEND_CHECKS_PASSED`, `ALL_PROGRESS_DURATION_FRONTEND_CHECKS_PASSED`, `ALL_XHS_BACKEND_CHECKS_PASSED`, `ALL_XHS_FRONTEND_CHECKS_PASSED`): all passed.
+
+## [2026-11-28] Fix GitHub Pages Artifact Race by Splitting `build` and `deploy` Jobs
+
+### Problem
+- `Deploy to GitHub Pages` Run `46097157716` failed twice in `actions/deploy-pages@v4` with `Found 0 artifact(s)` / `No artifacts named "github-pages" were found for this workflow run`.
+
+### Root Cause Analysis (RCA)
+- Log timestamps from Run `46097157716` showed `actions/upload-pages-artifact@v3` finalized artifact `15243867467` at `02:21:28.841Z`, and `actions/deploy-pages@v4` inside the same `build-and-deploy` job queried the GitHub Artifacts API only 270ms later (`02:21:29.111Z`), hitting GitHub's eventual-consistency indexing lag.
+
+### Corrective and Preventive Actions (CAPA)
+- Split `.github/workflows/deploy.yml` into separate `build` and `deploy` (`needs: build`) jobs following GitHub's official Pages workflow structure so the build job completes and artifact metadata propagates before `actions/deploy-pages@v4` starts.
+
+### Verification (PDCA Check)
+- Parsed `.github/workflows/deploy.yml` with `yaml.safe_load` and asserted `build`/`deploy` job split, `needs: build`, `environment: github-pages`, and step placement (`SPLIT_WORKFLOW_YAML_OK`).
